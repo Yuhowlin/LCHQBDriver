@@ -9,9 +9,9 @@ experiment API (`D:\github\SCQO`) against the **Qblox** control stack
 1. **Independent of Quantum Machines.** Never import `qm`, `quam`, `quam_builder`,
    `qualibrate`, or `qualibration_libs`. The only shared code is `scqo`, which is
    itself vendor-free. (See `pyproject.toml` — no QM packages.)
-2. **The common API lives in `scqo`, not here.** Parameters, Result, `analyze`,
+2. **The common API lives in `scqo`, not here.** Parameters, Result, `estimate`,
    `simulate`, `update`, registry and `Session` come from `scqo`. This repo adds
-   only the Qblox-specific halves: `build()` per protocol and the backend/device adapter.
+   only the Qblox-specific halves: `probe()` per experiment and the backend/device adapter.
 3. **Runs manually and via AI through the same `scqo.Session`.** `Session.catalog()` /
    `Session.run()` / `Session.device_state()` are plain JSON in/out.
 
@@ -22,9 +22,9 @@ lchqb/
                              #   wraps qblox_scheduler.HardwareAgent + QuantumDevice
   experiments/
     __init__.py              # imports each experiment module so @register runs (populates catalog)
-    resonator_spectroscopy.py# QbloxResonatorSpectroscopy(ResonatorSpectroscopy): only build()
-    ramsey.py                # QbloxRamsey(Ramsey): only build()
-    power_rabi.py            # QbloxPowerRabi(PowerRabi): only build()
+    resonator_spectroscopy.py# QbloxResonatorSpectroscopy(ResonatorSpectroscopy): only probe()
+    ramsey.py                # QbloxRamsey(Ramsey): only probe()
+    power_rabi.py            # QbloxPowerRabi(PowerRabi): only probe()
 qblox_config/                # ~ quam_config: device-model + config generation (stubs)
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
 scripts/
@@ -33,14 +33,14 @@ scripts/
 ```
 
 ## Adding an experiment
-1. Subclass the backend-free protocol from `scqo.protocols.<name>`.
-2. Implement only `build()` using `qblox_scheduler` (import the vendor lib *inside* the
+1. Subclass the backend-free experiment from `scqo.experiments.<name>`.
+2. Implement only `probe()` using `qblox_scheduler` (import the vendor lib *inside* the
    method / backend so `import lchqb` stays light and the simulated path needs no Qblox).
 3. `@register` the subclass and import the module in `lchqb/experiments/__init__.py`.
 Everything else (parameters, fitting, writeback, simulation) is inherited from `scqo`.
 
 ## Reference
-- Terminology (Experiment = probe + estimator; "protocol" retired): `D:\github\SCQO\CLAUDE.md` → **Terminology**. NOTE: this repo's text/code still uses the legacy `scqo.protocols` / `build()` names until the SCQO rename lands.
+- Terminology (Experiment = probe + estimator; "protocol" retired): `D:\github\SCQO\CLAUDE.md` → **Terminology**.
 - Shared API + patterns: `D:\github\SCQO\CLAUDE.md`.
 - Qblox usage examples (read-only demo repo): `D:\github\QBLOX_training\docs\applications\superconducting`.
 - QM sibling (do not import from it): `D:\github\LCHQMDriver`.

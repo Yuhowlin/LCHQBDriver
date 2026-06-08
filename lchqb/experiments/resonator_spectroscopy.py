@@ -1,8 +1,8 @@
-"""Qblox resonator spectroscopy — supplies only ``build()``.
+"""Qblox resonator spectroscopy — supplies only ``probe()``.
 
 Parameters, fitting, device writeback and the simulator are all inherited from
-``scqo.protocols.ResonatorSpectroscopy``. ``qblox_scheduler`` is imported inside
-``build()`` so the simulated path (and ``import lchqb``) needs no Qblox install.
+``scqo.experiments.ResonatorSpectroscopy``. ``qblox_scheduler`` is imported inside
+``probe()`` so the simulated path (and ``import lchqb``) needs no Qblox install.
 """
 
 from __future__ import annotations
@@ -10,14 +10,14 @@ from __future__ import annotations
 from typing import Any
 
 from scqo import register
-from scqo.protocols import ResonatorSpectroscopy
+from scqo.experiments import ResonatorSpectroscopy
 
 
 @register
 class QbloxResonatorSpectroscopy(ResonatorSpectroscopy):
     """Build a multiplexed resonator-spectroscopy Schedule for a Qblox cluster."""
 
-    def build(self) -> Any:
+    def probe(self) -> Any:
         from qblox_scheduler import Schedule
         from qblox_scheduler.operations import IdlePulse, Measure
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace

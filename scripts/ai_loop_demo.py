@@ -18,7 +18,7 @@ import lchqb.experiments  # noqa: F401  registers experiments
 
 
 def agent_decide(catalog: list[dict], device_state: dict) -> tuple[str, dict]:
-    """Stand-in for an LLM: pick a protocol + fill its parameters from the schema.
+    """Stand-in for an LLM: pick an experiment + fill its parameters from the schema.
 
     A real agent would receive `catalog` as tool definitions and `device_state` as
     context, then emit a tool call. Here we hard-code one decision.
@@ -42,9 +42,9 @@ def main() -> None:
 
     # 2. decide -> 3. act -> 4. read result -> (loop)
     for _ in range(1):  # one iteration for the demo; a real loop continues until a goal is met
-        protocol, params = agent_decide(catalog, sess.device_state())
-        result = sess.run(protocol, params)
-        print(f"ran {protocol} -> success={all(v == 'successful' for v in result['outcomes'].values())}")
+        experiment, params = agent_decide(catalog, sess.device_state())
+        result = sess.run(experiment, params)
+        print(f"ran {experiment} -> success={all(v == 'successful' for v in result['outcomes'].values())}")
         print("extracted:", json.dumps(result["fit"], indent=2))
 
     print("final device state:", json.dumps(sess.device_state(), indent=2))

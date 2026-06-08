@@ -18,7 +18,7 @@ from scqo.backend import Backend
 from scqo.device import DeviceModel, QubitView
 
 if TYPE_CHECKING:
-    from scqo.protocol import Protocol
+    from scqo.experiment import Experiment
 
 
 class QbloxQubitView(QubitView):
@@ -106,13 +106,13 @@ class QbloxBackend(Backend):
     def device(self) -> QbloxDeviceModel:
         return self._device
 
-    def acquire(self, protocol: "Protocol") -> xr.Dataset:
-        schedule = protocol.build()  # native qblox_scheduler.Schedule
+    def acquire(self, experiment: "Experiment") -> xr.Dataset:
+        schedule = experiment.probe()  # native qblox_scheduler.Schedule
         raw = self._hw_agent.run(schedule, timeout=120)
-        return self._to_canonical(raw, protocol)
+        return self._to_canonical(raw, experiment)
 
     @staticmethod
-    def _to_canonical(raw: xr.Dataset, protocol: "Protocol") -> xr.Dataset:
+    def _to_canonical(raw: xr.Dataset, experiment: "Experiment") -> xr.Dataset:
         """Relabel a raw Qblox dataset into scqo's convention: dims (qubit, <sweep>), vars I/Q.
 
         TODO: implement against the real ``hw_agent.run`` output schema for the lab's

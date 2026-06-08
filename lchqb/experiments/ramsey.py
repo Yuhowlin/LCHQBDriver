@@ -1,9 +1,9 @@
-"""Qblox Ramsey — supplies only ``build()``.
+"""Qblox Ramsey — supplies only ``probe()``.
 
 Same one-method pattern as resonator spectroscopy, on a completely different physics
-protocol: X90 — idle(t) — X90 — Measure, looping the idle time. Parameters, the
+experiment: X90 — idle(t) — X90 — Measure, looping the idle time. Parameters, the
 decaying-cosine fit, T2*/detuning extraction, and the drive_freq writeback are all
-inherited from ``scqo.protocols.Ramsey``.
+inherited from ``scqo.experiments.Ramsey``.
 """
 
 from __future__ import annotations
@@ -11,14 +11,14 @@ from __future__ import annotations
 from typing import Any
 
 from scqo import register
-from scqo.protocols import Ramsey
+from scqo.experiments import Ramsey
 
 
 @register
 class QbloxRamsey(Ramsey):
     """Build a multiplexed Ramsey Schedule for a Qblox cluster."""
 
-    def build(self) -> Any:
+    def probe(self) -> Any:
         from qblox_scheduler import Schedule
         from qblox_scheduler.operations import IdlePulse, Measure, X90
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
