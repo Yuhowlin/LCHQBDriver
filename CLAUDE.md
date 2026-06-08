@@ -40,6 +40,7 @@ scripts/
 Everything else (parameters, fitting, writeback, simulation) is inherited from `scqo`.
 
 ## Reference
+- Terminology (Experiment = probe + estimator; "protocol" retired): `D:\github\SCQO\CLAUDE.md` → **Terminology**. NOTE: this repo's text/code still uses the legacy `scqo.protocols` / `build()` names until the SCQO rename lands.
 - Shared API + patterns: `D:\github\SCQO\CLAUDE.md`.
 - Qblox usage examples (read-only demo repo): `D:\github\QBLOX_training\docs\applications\superconducting`.
 - QM sibling (do not import from it): `D:\github\LCHQMDriver`.
