@@ -17,6 +17,11 @@ dependencies = [
 # (no qm-qua, quam, quam-builder, qualibrate, qualibration-libs). LCHQBDriver
 # imports only `scqo` (vendor-free) and the Qblox stack.
 
+# Advertise the Qblox experiments to scqo so Session.catalog() finds them without the
+# consumer importing lchqb.experiments by hand (scqo loads this lazily on first catalog()).
+[project.entry-points."scqo.experiments"]
+lchqb = "lchqb.experiments"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
