@@ -1,7 +1,7 @@
-"""Qblox power Rabi — supplies only ``probe()``.
+"""Qblox qubit power Rabi — supplies only ``probe()``.
 
 Amplitude sweep: X(amp) — Measure, looping the drive amplitude. Parameters, the cosine
-fit, pi_amp recovery and writeback are inherited from ``scqo.experiments.PowerRabi``.
+fit, pi_amp recovery and writeback are inherited from ``scqo.experiments.QubitPowerRabi``.
 """
 
 from __future__ import annotations
@@ -9,11 +9,11 @@ from __future__ import annotations
 from typing import Any
 
 from scqo import register
-from scqo.experiments import PowerRabi
+from scqo.experiments import QubitPowerRabi
 
 
 @register
-class QbloxPowerRabi(PowerRabi):
+class QbloxQubitPowerRabi(QubitPowerRabi):
     """Build a multiplexed power-Rabi Schedule for a Qblox cluster."""
 
     def probe(self) -> Any:

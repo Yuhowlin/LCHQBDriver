@@ -3,7 +3,7 @@
 Same one-method pattern as resonator spectroscopy, on a completely different physics
 experiment: X90 — idle(t) — X90 — Measure, looping the idle time. Parameters, the
 decaying-cosine fit, T2*/detuning extraction, and the drive_freq writeback are all
-inherited from ``scqo.experiments.Ramsey``.
+inherited from ``scqo.experiments.QubitRamsey``.
 """
 
 from __future__ import annotations
@@ -11,11 +11,11 @@ from __future__ import annotations
 from typing import Any
 
 from scqo import register
-from scqo.experiments import Ramsey
+from scqo.experiments import QubitRamsey
 
 
 @register
-class QbloxRamsey(Ramsey):
+class QbloxQubitRamsey(QubitRamsey):
     """Build a multiplexed Ramsey Schedule for a Qblox cluster."""
 
     def probe(self) -> Any:

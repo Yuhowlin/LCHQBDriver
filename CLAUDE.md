@@ -23,8 +23,8 @@ lchqb/
   experiments/
     __init__.py              # imports each experiment module so @register runs (populates catalog)
     resonator_spectroscopy.py# QbloxResonatorSpectroscopy(ResonatorSpectroscopy): only probe()
-    ramsey.py                # QbloxRamsey(Ramsey): only probe()
-    power_rabi.py            # QbloxPowerRabi(PowerRabi): only probe()
+    qubit_ramsey.py          # QbloxQubitRamsey(QubitRamsey): only probe()
+    qubit_power_rabi.py      # QbloxQubitPowerRabi(QubitPowerRabi): only probe()
 qblox_config/                # ~ quam_config: device-model + config generation (stubs)
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
 scripts/
@@ -46,6 +46,6 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
 - QM sibling (do not import from it): `D:\github\LCHQMDriver`.
 
 ## Status
-Skeleton. `resonator_spectroscopy`, `ramsey` and `power_rabi` are worked examples; all run
+Skeleton. `resonator_spectroscopy`, `qubit_ramsey` and `qubit_power_rabi` are worked examples; all run
 end-to-end on the simulated backend today and on real Qblox hardware once `qblox_config` /
 `qblox_state` are filled in and `QbloxBackend` is pointed at a cluster.
