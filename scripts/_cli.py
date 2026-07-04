@@ -39,9 +39,18 @@ def _schema_epilog(experiment: str) -> str:
 
 
 def run_experiment_cli(experiment: str | None = None, doc: str | None = None) -> int:
+    # --help prints during parsing, so the parameter epilog must be decided BEFORE the
+    # real parse. In the generic form, peek at the command line for the experiment name
+    # so `run_experiment.py qubit_power_rabi --help` shows that experiment's parameters.
+    help_target = experiment
+    if help_target is None:
+        peek = argparse.ArgumentParser(add_help=False)
+        peek.add_argument("experiment", nargs="?")
+        help_target = peek.parse_known_args()[0].experiment
+
     parser = argparse.ArgumentParser(
         description=doc or __doc__,
-        epilog=_schema_epilog(experiment) if experiment else None,
+        epilog=_schema_epilog(help_target) if help_target else None,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     if experiment is None:
