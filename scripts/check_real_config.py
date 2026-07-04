@@ -48,8 +48,16 @@ def main() -> int:
     shutil.copy(_pick(source, "hw_config*.json"), work / "hw_config.json")
     print(f"work dir (originals untouched): {work}")
 
-    import lchqb.elements  # noqa: F401  register the lab's custom element types
-    from qblox_scheduler import QuantumDevice
+    try:
+        import lchqb.elements  # noqa: F401  register the lab's custom element types
+        from qblox_scheduler import QuantumDevice
+    except ModuleNotFoundError as err:
+        raise SystemExit(
+            f"missing package: {err.name}\n"
+            "This self-test needs the Qblox stack. Either install it into this environment:\n"
+            "    uv pip install --python <your-venv-python> -e D:/github/LCHQBDriver\n"
+            "or activate an environment that has it (lab: conda activate LCHQB)."
+        )
 
     qd = QuantumDevice.from_json_file(str(work / "dut_config.json"))
     print(f"[1/5] loaded device '{qd.name}' | elements: {list(qd.elements)}")
