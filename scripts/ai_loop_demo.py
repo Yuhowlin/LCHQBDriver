@@ -1,8 +1,10 @@
 """Sketch of the loop an AI agent would drive over the SAME scqo.Session API.
 
 The agent only ever sees JSON: a catalog of measurements (with parameter schemas), the
-structured result of each run, and the device snapshot it uses as memory. No Qblox or QM
-object crosses the agent boundary — so the identical loop works on either backend.
+structured result of each run (now carrying ``run_id``/``data_path``), the queryable
+run store (``find_runs``), and the device snapshot + change history it uses as memory.
+No Qblox or QM object crosses the agent boundary — the identical loop works on either
+backend.
 
     python scripts/ai_loop_demo.py
 """
@@ -11,10 +13,7 @@ from __future__ import annotations
 
 import json
 
-from scqo import Session
-from scqo.testing import InMemoryDevice, SimulatedBackend
-
-import lchqb.experiments  # noqa: F401  registers experiments
+from _lab import build_session
 
 
 def agent_decide(catalog: list[dict], device_state: dict) -> tuple[str, dict]:
@@ -28,13 +27,7 @@ def agent_decide(catalog: list[dict], device_state: dict) -> tuple[str, dict]:
 
 
 def main() -> None:
-    device = InMemoryDevice(
-        {
-            "q0": {"readout_freq": 5.95e9, "drive_freq": 3.87e9, "pi_amp": 0.20},
-            "q1": {"readout_freq": 6.05e9, "drive_freq": 4.01e9, "pi_amp": 0.18},
-        }
-    )
-    sess = Session(SimulatedBackend(device))
+    sess, _ = build_session()
 
     # 1. perceive: what can I measure, and what is the device's current state?
     catalog = sess.catalog()
@@ -46,7 +39,11 @@ def main() -> None:
         result = sess.run(experiment, params)
         print(f"ran {experiment} -> success={all(v == 'successful' for v in result['outcomes'].values())}")
         print("extracted:", json.dumps(result["fit"], indent=2))
+        if "run_id" in result:  # the loop's episodic memory: every run is findable later
+            print("saved as:", result["run_id"])
 
+    # 5. remember: past runs + change history are the loop's memory
+    print("recent runs:", json.dumps([r["run_id"] for r in sess.find_runs(limit=5)], indent=2))
     print("final device state:", json.dumps(sess.device_state(), indent=2))
 
 

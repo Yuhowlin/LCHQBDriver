@@ -1,39 +1,37 @@
-"""Manual end-to-end run of resonator spectroscopy.
+"""Manual end-to-end run of resonator spectroscopy (worked example).
 
-Defaults to scqo's SimulatedBackend so it runs with no Qblox hardware. To run on a real
-cluster, swap in QbloxBackend (see the commented lines) — nothing else changes.
+Backend, data location and device name come from the lab config
+(``~/.scqo/config.toml``) — with no config it runs on the SimulatedBackend and saves
+nothing. For anything beyond this one experiment use ``scripts/run_experiment.py``.
 
-    python scripts/run_resonator_spectroscopy.py
+    python scripts/run_resonator_spectroscopy.py [--qubits q0 q1] [--tag mytag]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 
-from scqo import Session
-from scqo.testing import InMemoryDevice, SimulatedBackend
-
-import lchqb.experiments  # noqa: F401  registers QbloxResonatorSpectroscopy into the catalog
+from _lab import build_session
 
 
 def main() -> None:
-    device = InMemoryDevice(
-        {
-            "q0": {"readout_freq": 5.95e9, "drive_freq": 3.87e9, "pi_amp": 0.20},
-            "q1": {"readout_freq": 6.05e9, "drive_freq": 4.01e9, "pi_amp": 0.18},
-        }
-    )
-    backend = SimulatedBackend(device)
-    # Real hardware instead:
-    # from lchqb.backend import QbloxBackend
-    # backend = QbloxBackend.load(config_dir="./qblox_state", output_dir="./data")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--qubits", nargs="+", help="qubits to measure (default: all)")
+    parser.add_argument("--span", type=float, default=15e6, help="frequency span in Hz")
+    parser.add_argument("--points", type=int, default=201, help="number of sweep points")
+    parser.add_argument("--tag", action="append", default=[], dest="tags")
+    parser.add_argument("--config", help="lab config path")
+    args = parser.parse_args()
 
-    sess = Session(backend)
+    sess, _ = build_session(args.config)
+    qubits = args.qubits or list(sess.device_state())
 
     print("readout_freq before:", {q: s["readout_freq"] for q, s in sess.device_state().items()})
     result = sess.run(
         "resonator_spectroscopy",
-        {"qubits": ["q0", "q1"], "frequency_span_hz": 15e6, "num_points": 201},
+        {"qubits": qubits, "frequency_span_hz": args.span, "num_points": args.points},
+        tags=args.tags,
     )
     print("result:", json.dumps(result, indent=2))
     print("readout_freq after: ", {q: s["readout_freq"] for q, s in sess.device_state().items()})

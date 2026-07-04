@@ -28,9 +28,15 @@ lchqb/
 qblox_config/                # ~ quam_config: device-model + config generation (stubs)
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
 scripts/
-  run_resonator_spectroscopy.py  # manual end-to-end (defaults to SimulatedBackend; switch to QbloxBackend for HW)
-  ai_loop_demo.py                # shows the catalog -> decide -> run -> read loop an agent would drive
+  _lab.py                        # shared: lab config (~/.scqo/config.toml) -> Session (backend, datastore, tags)
+  run_experiment.py              # student entry point: run ANY cataloged experiment; every run saved + searchable
+  find_runs.py                   # student entry point: query saved runs (no instrument touched)
+  run_resonator_spectroscopy.py  # worked single-experiment example (config-driven)
+  ai_loop_demo.py                # shows the catalog -> decide -> run -> find_runs loop an agent would drive
 ```
+Students run the scripts and edit **nothing** here: backend choice, data_root, device
+name and default tags come from `~/.scqo/config.toml` (see `scqo.labconfig`). With no
+config everything runs simulated and saves nothing.
 
 ## Adding an experiment
 1. Subclass the backend-free experiment from `scqo.experiments.<name>`.
