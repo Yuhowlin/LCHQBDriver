@@ -59,6 +59,12 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
 - QM sibling (do not import from it): `D:\github\LCHQMDriver`.
 
 ## Status
-Skeleton. `resonator_spectroscopy`, `qubit_ramsey` and `qubit_power_rabi` are worked examples; all run
-end-to-end on the simulated backend today and on real Qblox hardware once `qblox_config` /
-`qblox_state` are filled in and `QbloxBackend` is pointed at a cluster.
+`resonator_spectroscopy`, `qubit_ramsey` and `qubit_power_rabi` run end-to-end on the simulated
+backend. **2026-07-04 — verified against the lab's REAL dut config** (`AS_QRC`: q1, q2 + coupler
+c12): `lchqb/elements.py` vendors the lab's `FluxTunableTransmonElement` (from QBLOX_training's
+`custom_elements.py`; keep in sync) so `QuantumDevice.from_json_file` can deserialize it —
+`QbloxBackend` registers it before loading. `QbloxQubitView` reads/writes both scheduler API
+generations (legacy QCoDeS callables and the pydantic-model plain attributes), and `snapshot()`
+tolerates non-transmon elements. Full scqo Session (simulated data over the real device tree:
+read -> fit -> writeback -> vendor-format save) passes. Remaining for real hardware:
+`QbloxBackend._to_canonical()` against the lab's acquisition output.

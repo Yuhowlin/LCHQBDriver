@@ -21,6 +21,21 @@ if TYPE_CHECKING:
     from scqo.experiment import Experiment
 
 
+def _read(owner: Any, name: str) -> float:
+    """Read a scheduler parameter across API generations: the legacy QCoDeS style
+    exposes a callable (``param()``), the pydantic-model style a plain attribute."""
+    attr = getattr(owner, name)
+    return float(attr() if callable(attr) else attr)
+
+
+def _write(owner: Any, name: str, value: float) -> None:
+    attr = getattr(owner, name)
+    if callable(attr):
+        attr(float(value))
+    else:
+        setattr(owner, name, float(value))
+
+
 class QbloxQubitView(QubitView):
     """A scqo QubitView backed by a qblox_scheduler ``DeviceElement``."""
 
@@ -30,27 +45,35 @@ class QbloxQubitView(QubitView):
 
     @property
     def readout_freq(self) -> float:
-        return float(self._element.clock_freqs.readout())
+        return _read(self._element.clock_freqs, "readout")
 
     @readout_freq.setter
     def readout_freq(self, value: float) -> None:
-        self._element.clock_freqs.readout(float(value))
+        _write(self._element.clock_freqs, "readout", value)
 
     @property
     def drive_freq(self) -> float:
-        return float(self._element.clock_freqs.f01())
+        return _read(self._element.clock_freqs, "f01")
 
     @drive_freq.setter
     def drive_freq(self, value: float) -> None:
-        self._element.clock_freqs.f01(float(value))
+        _write(self._element.clock_freqs, "f01", value)
 
     @property
     def pi_amp(self) -> float:
-        return float(self._element.rxy.amp180())
+        return _read(self._element.rxy, "amp180")
 
     @pi_amp.setter
     def pi_amp(self, value: float) -> None:
-        self._element.rxy.amp180(float(value))
+        _write(self._element.rxy, "amp180", value)
+
+
+def _read_or_none(view: QubitView, field: str) -> float | None:
+    """Read a neutral field, returning None if this element doesn't carry it."""
+    try:
+        return getattr(view, field)
+    except (TypeError, AttributeError, KeyError):
+        return None
 
 
 class QbloxDeviceModel(DeviceModel):
@@ -68,14 +91,12 @@ class QbloxDeviceModel(DeviceModel):
             self._qd.to_json_file(self._config_dir, add_timestamp=False)
 
     def snapshot(self) -> dict:
+        # Tolerate non-transmon elements (couplers etc.): report None for a field the
+        # element doesn't carry rather than crashing on a real lab device tree.
         state: dict[str, dict] = {}
         for name in self._qd.elements:
             view = self.qubit(name)
-            state[name] = {
-                "readout_freq": view.readout_freq,
-                "drive_freq": view.drive_freq,
-                "pi_amp": view.pi_amp,
-            }
+            state[name] = {field: _read_or_none(view, field) for field in ("readout_freq", "drive_freq", "pi_amp")}
         return state
 
 
@@ -83,7 +104,10 @@ class QbloxBackend(Backend):
     """scqo Backend over a Qblox cluster (or dummy connections for dry runs)."""
 
     def __init__(self, hardware_config: str, device_config: str, output_dir: str | None = None) -> None:
-        # Lazy import keeps `import lchqb` free of qblox_scheduler.
+        # Lazy import keeps `import lchqb` free of qblox_scheduler. The elements import
+        # registers the lab's custom element types (FluxTunableTransmonElement) so the
+        # dut config can be deserialized.
+        import lchqb.elements  # noqa: F401
         from qblox_scheduler import HardwareAgent
 
         self._hw_agent = HardwareAgent(
