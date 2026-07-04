@@ -32,7 +32,13 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(linspace(amp_abs[0], amp_abs[-1], amp_abs.size, dtype=DType.AMPLITUDE)) as amp:
                     sub.add(X(qubit_name, amp180=amp))
-                    sub.add(Measure(qubit_name))
+                    sub.add(
+                        Measure(
+                            qubit_name,
+                            coords={f"amp_{qubit_name}": amp},
+                            acq_channel=f"S_21_{qubit_name}",
+                        )
+                    )
                     sub.add(IdlePulse(10e-6))
             schedule.add(sub)
         return schedule

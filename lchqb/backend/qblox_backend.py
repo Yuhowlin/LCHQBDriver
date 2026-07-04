@@ -143,28 +143,57 @@ class QbloxBackend(Backend):
     def _to_canonical(raw: xr.Dataset, experiment: "Experiment") -> xr.Dataset:
         """Relabel a raw Qblox dataset into scqo's convention: dims (qubit, <sweep>), vars I/Q.
 
-        TODO: implement against the real ``hw_agent.run`` output schema for the lab's
-        acquisition setup. Kept explicit so the seam is obvious; until then the Qblox
-        hardware path raises rather than silently returning mislabeled data — but it
-        first DUMPS the raw dataset to disk: that file is exactly what is needed to
-        implement this mapping, so a bring-up run is never wasted.
+        The probes label every acquisition ``acq_channel=f"S_21_{qubit}"`` with the
+        sweep loop variable as a per-point coordinate (cal02 reference pattern), so
+        the hardware returns one complex S21 array per qubit over the swept axis
+        (repetitions averaged on the cluster). The canonical sweep values come from
+        ``experiment.sweep_axes`` — the probe built its loop from exactly those.
+        On a structure mismatch the raw dataset is pickled for offline inspection.
         """
-        import tempfile
-        from datetime import datetime
-        from pathlib import Path
+        import numpy as np
 
-        summary = (
-            f"dims={dict(raw.sizes)}, data_vars={list(raw.data_vars)}, "
-            f"coords={list(raw.coords)}, attrs_keys={list(raw.attrs)[:10]}"
-        )
-        dump = Path(tempfile.gettempdir()) / f"qblox_raw_{datetime.now():%Y%m%d-%H%M%S}.nc"
+        qubits = list(experiment.params.qubits)  # type: ignore[attr-defined]
+        (axis_name, axis_values), = experiment.sweep_axes.items()
         try:
-            raw.to_netcdf(dump)
-            hint = f"raw dataset dumped to {dump}"
-        except Exception as err:  # some raw payloads may not be netCDF-serializable
-            hint = f"raw dataset could not be dumped ({type(err).__name__}: {err})"
-        raise NotImplementedError(
-            "Qblox raw->canonical mapping not implemented yet for this acquisition. "
-            f"{hint}; structure: {summary}. "
-            "Provide that file/structure to implement _to_canonical."
+            i_rows, q_rows = [], []
+            for name in qubits:
+                key = f"S_21_{name}"
+                if key not in raw.data_vars:
+                    raise KeyError(
+                        f"acquisition channel {key!r} not in raw dataset "
+                        f"(data_vars={list(raw.data_vars)}) — probe/hardware mismatch"
+                    )
+                values = np.asarray(raw[key].values).squeeze()
+                if values.ndim != 1 or values.size != len(axis_values):
+                    raise ValueError(
+                        f"{key}: expected {len(axis_values)} points on one swept axis, "
+                        f"got shape {values.shape} (dims={dict(raw.sizes)})"
+                    )
+                i_rows.append(values.real)
+                q_rows.append(values.imag)
+        except (KeyError, ValueError) as err:
+            raise type(err)(f"{err}; {_dump_raw(raw)}") from err
+        return xr.Dataset(
+            {
+                "I": (("qubit", axis_name), np.stack(i_rows)),
+                "Q": (("qubit", axis_name), np.stack(q_rows)),
+            },
+            coords={"qubit": qubits, axis_name: np.asarray(axis_values)},
         )
+
+
+def _dump_raw(raw: xr.Dataset) -> str:
+    """Pickle the raw hardware dataset for offline inspection (netCDF can't hold the
+    complex S21 data); a failed bring-up run is never wasted."""
+    import pickle
+    import tempfile
+    from datetime import datetime
+    from pathlib import Path
+
+    dump = Path(tempfile.gettempdir()) / f"qblox_raw_{datetime.now():%Y%m%d-%H%M%S}.pkl"
+    try:
+        with open(dump, "wb") as f:
+            pickle.dump(raw, f)
+        return f"raw dataset pickled to {dump}"
+    except Exception as err:
+        return f"raw dataset could not be pickled ({type(err).__name__}: {err})"

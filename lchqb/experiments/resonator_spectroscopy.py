@@ -36,7 +36,17 @@ class QbloxResonatorSpectroscopy(ResonatorSpectroscopy):
                 with sub.loop(
                     linspace(center - span / 2, center + span / 2, num, dtype=DType.FREQUENCY)
                 ) as freq:
-                    sub.add(Measure(qubit_name, freq=freq))
+                    # coords labels the sweep point and acq_channel names the S21
+                    # acquisition: without them the cluster averages the whole sweep
+                    # into one anonymous bin (verified on hardware 2026-07-04).
+                    sub.add(
+                        Measure(
+                            qubit_name,
+                            freq=freq,
+                            coords={f"frequency_{qubit_name}": freq},
+                            acq_channel=f"S_21_{qubit_name}",
+                        )
+                    )
                     sub.add(IdlePulse(10e-6))
             schedule.add(sub)
         return schedule

@@ -40,7 +40,13 @@ class QbloxQubitRamsey(QubitRamsey):
                     sub.add(IdlePulse(tau))
                     # Detune via accumulated phase = 2*pi * detuning * tau on the second pi/2.
                     sub.add(X90(qubit_name, phase=360.0 * detuning * tau))
-                    sub.add(Measure(qubit_name))
+                    sub.add(
+                        Measure(
+                            qubit_name,
+                            coords={f"tau_{qubit_name}": tau},
+                            acq_channel=f"S_21_{qubit_name}",
+                        )
+                    )
                     sub.add(IdlePulse(10e-6))
             schedule.add(sub)
         return schedule
