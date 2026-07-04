@@ -79,11 +79,22 @@ def run_experiment_cli(experiment: str | None = None, doc: str | None = None) ->
 
     params: dict = {}
     if args.params:
-        if os.path.isfile(args.params):
-            with open(args.params, encoding="utf-8") as f:
-                params.update(json.load(f))
-        else:
-            params.update(json.loads(args.params))
+        try:
+            if os.path.isfile(args.params):
+                with open(args.params, encoding="utf-8") as f:
+                    loaded = json.load(f)
+            else:
+                loaded = json.loads(args.params)
+            if not isinstance(loaded, dict):
+                raise SystemExit(f"--params must be a JSON object {{...}}, got {type(loaded).__name__}")
+            params.update(loaded)
+        except json.JSONDecodeError as err:
+            msg = f"--params expects a JSON file path or inline JSON, got: {args.params!r} ({err})"
+            if "=" in args.params and not args.params.lstrip().startswith("{"):
+                msg += f"\nDid you mean:  --set {args.params}"
+            else:
+                msg += '\nExamples:  --params my_params.json   or   --params "{""num_points"": 201}"'
+            raise SystemExit(msg)
     if args.qubits:
         params["qubits"] = args.qubits
     for item in args.set:
