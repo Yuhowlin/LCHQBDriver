@@ -26,22 +26,51 @@ DEMO_QUBITS = {
 }
 
 
+def _qblox_config_dir(cfg: LabConfig, *needed: str) -> Path:
+    """Resolve [qblox] config_dir and check the required files exist (clear errors)."""
+    config_dir = Path(cfg.extras.get("qblox", {}).get("config_dir", "./qblox_state"))
+    missing = [n for n in needed if not (config_dir / n).is_file()]
+    if missing:
+        raise SystemExit(
+            f"backend {cfg.backend!r}: {', '.join(missing)} not found in {config_dir.resolve()}\n"
+            "Point [qblox] config_dir in the lab config at a folder holding your device\n"
+            "config (copy your dut_config_*.json there as dut_config.json" +
+            (" and hw_config_*.json as hw_config.json" if "hw_config.json" in needed else "") + ")."
+        )
+    return config_dir
+
+
 def build_session(config_path: str | None = None) -> tuple[Session, LabConfig]:
-    """Load the lab config and return a wired Session (datastore, state file, tags)."""
+    """Load the lab config and return a wired Session (datastore, state file, tags).
+
+    Backends: ``simulated`` (demo qubits, synthetic data) · ``qblox_sim`` (your REAL
+    device config as a virtual twin: real qubits/values, synthetic data, writebacks
+    persisted to the working dut_config.json) · ``qblox`` (real cluster).
+    """
     cfg = load_lab_config(config_path)
     if cfg.backend == "qblox":
         from lchqb.backend import QbloxBackend
 
-        qblox = cfg.extras.get("qblox", {})
+        config_dir = _qblox_config_dir(cfg, "dut_config.json", "hw_config.json")
         backend = QbloxBackend.load(
-            config_dir=qblox.get("config_dir", "./qblox_state"),
-            output_dir=qblox.get("output_dir"),
+            config_dir=str(config_dir),
+            output_dir=cfg.extras.get("qblox", {}).get("output_dir"),
         )
+    elif cfg.backend == "qblox_sim":
+        # Virtual twin: load the lab's REAL device tree, acquire simulated data.
+        import lchqb.elements  # noqa: F401  register custom element types
+        from qblox_scheduler import QuantumDevice
+
+        from lchqb.backend.qblox_backend import QbloxDeviceModel
+
+        dut = _qblox_config_dir(cfg, "dut_config.json") / "dut_config.json"
+        device = QbloxDeviceModel(QuantumDevice.from_json_file(str(dut)), config_file=str(dut))
+        backend = SimulatedBackend(device)
     elif cfg.backend == "simulated":
         backend = SimulatedBackend(InMemoryDevice(DEMO_QUBITS))
     else:
         raise SystemExit(
             f"unsupported backend {cfg.backend!r} in {cfg.source or 'defaults'} "
-            "(this repo drives 'qblox' or 'simulated'; 'qm' scripts live in LCHQMDriver)"
+            "(this repo drives 'qblox', 'qblox_sim' or 'simulated'; 'qm' scripts live in LCHQMDriver)"
         )
     return make_session(backend, cfg), cfg
