@@ -36,6 +36,10 @@ scripts/                         # the COMPLETE Tier-1 (student) surface — no 
   device.py                      # current calibration table + change history (old -> new, run_id)
   run_resonator_spectroscopy.py  # worked single-experiment example (config-driven)
   ai_loop_demo.py                # shows the catalog -> decide -> run -> find_runs loop an agent would drive
+  _cli.py                        # shared engine behind run_experiment.py + the launchers below
+  experiments/                   # one AUTO-GENERATED launcher per cataloged experiment
+    _sync.py                     #   regenerator (manager runs it after registering an experiment)
+    <name>.py                    #   direct run, qualibrate-node style; --help shows its parameter schema
 ```
 Students run the scripts and edit **nothing** here: backend choice, data_root, device
 name and default tags come from `~/.scqo/config.toml` (see `scqo.labconfig`). With no
