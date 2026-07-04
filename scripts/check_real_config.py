@@ -46,7 +46,9 @@ def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="scqo_qblox_selftest_"))
     shutil.copy(_pick(source, "dut_config*.json"), work / "dut_config.json")
     shutil.copy(_pick(source, "hw_config*.json"), work / "hw_config.json")
-    print(f"work dir (originals untouched): {work}")
+    print(f"sandbox: {work}")
+    print("  (temporary self-test copies + throwaway run data: your originals and your")
+    print("   real data_root are NOT touched; real measurements use run_experiment.py)")
 
     try:
         import lchqb.elements  # noqa: F401  register the lab's custom element types
