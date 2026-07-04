@@ -27,10 +27,13 @@ lchqb/
     qubit_power_rabi.py      # QbloxQubitPowerRabi(QubitPowerRabi): only probe()
 qblox_config/                # ~ quam_config: device-model + config generation (stubs)
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
-scripts/
+scripts/                         # the COMPLETE Tier-1 (student) surface — no Python needed beyond these
   _lab.py                        # shared: lab config (~/.scqo/config.toml) -> Session (backend, datastore, tags)
-  run_experiment.py              # student entry point: run ANY cataloged experiment; every run saved + searchable
-  find_runs.py                   # student entry point: query saved runs (no instrument touched)
+  run_experiment.py              # run ANY cataloged experiment; every run saved + searchable
+  calibrate.py                   # daily workflow: resonator_spec -> ramsey -> power_rabi, tagged, summarized
+  find_runs.py                   # query saved runs (no instrument touched)
+  tag_run.py                     # retro-tag / annotate a saved run (no instrument touched)
+  device.py                      # current calibration table + change history (old -> new, run_id)
   run_resonator_spectroscopy.py  # worked single-experiment example (config-driven)
   ai_loop_demo.py                # shows the catalog -> decide -> run -> find_runs loop an agent would drive
 ```
