@@ -145,9 +145,26 @@ class QbloxBackend(Backend):
 
         TODO: implement against the real ``hw_agent.run`` output schema for the lab's
         acquisition setup. Kept explicit so the seam is obvious; until then the Qblox
-        hardware path raises rather than silently returning mislabeled data.
+        hardware path raises rather than silently returning mislabeled data — but it
+        first DUMPS the raw dataset to disk: that file is exactly what is needed to
+        implement this mapping, so a bring-up run is never wasted.
         """
+        import tempfile
+        from datetime import datetime
+        from pathlib import Path
+
+        summary = (
+            f"dims={dict(raw.sizes)}, data_vars={list(raw.data_vars)}, "
+            f"coords={list(raw.coords)}, attrs_keys={list(raw.attrs)[:10]}"
+        )
+        dump = Path(tempfile.gettempdir()) / f"qblox_raw_{datetime.now():%Y%m%d-%H%M%S}.nc"
+        try:
+            raw.to_netcdf(dump)
+            hint = f"raw dataset dumped to {dump}"
+        except Exception as err:  # some raw payloads may not be netCDF-serializable
+            hint = f"raw dataset could not be dumped ({type(err).__name__}: {err})"
         raise NotImplementedError(
-            "Map the raw Qblox dataset to scqo canonical form (dims=(qubit, sweep...), vars=I/Q) "
-            "for this lab's acquisition. Use SimulatedBackend for offline runs."
+            "Qblox raw->canonical mapping not implemented yet for this acquisition. "
+            f"{hint}; structure: {summary}. "
+            "Provide that file/structure to implement _to_canonical."
         )
