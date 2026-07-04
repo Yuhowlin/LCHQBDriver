@@ -4,7 +4,7 @@
     python scripts/calibrate.py --qubits q0 q1 --tag cooldown7
     python scripts/calibrate.py --skip resonator_spectroscopy
 
-Sequence: resonator_spectroscopy -> qubit_ramsey -> qubit_power_rabi, each with its
+Sequence: resonator_spectroscopy -> qubit_spectroscopy -> qubit_power_rabi, each with its
 default parameters (need custom parameters? run that step alone via
 ``run_experiment.py``). Every step is saved to the datastore and tagged; fitted
 values are written back to the device state as each step succeeds. Exits non-zero
@@ -18,7 +18,10 @@ import sys
 
 from _lab import build_session, default_qubits
 
-SEQUENCE = ["resonator_spectroscopy", "qubit_ramsey", "qubit_power_rabi"]
+# Bring-up order: readout -> coarse f01 (two-tone) -> pi amplitude. Ramsey (fine
+# frequency + T2*) needs a calibrated pi pulse first: run it explicitly via
+# run_experiment.py once this sequence succeeds.
+SEQUENCE = ["resonator_spectroscopy", "qubit_spectroscopy", "qubit_power_rabi"]
 
 
 def main() -> int:

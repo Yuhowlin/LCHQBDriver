@@ -1,0 +1,66 @@
+"""Qblox qubit spectroscopy — supplies only ``probe()``.
+
+Two-tone: a continuous weak microwave drive (voltage offset on the drive port, cal05
+reference pattern) while the drive-clock NCO steps through the sweep; measure after
+the qubit reaches its driven steady state. Parameters, peak fitting and the
+drive_freq writeback are inherited from ``scqo.experiments.QubitSpectroscopy``.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from scqo import register
+from scqo.experiments import QubitSpectroscopy
+
+
+@register
+class QbloxQubitSpectroscopy(QubitSpectroscopy):
+    """Build a multiplexed two-tone spectroscopy Schedule for a Qblox cluster."""
+
+    def probe(self) -> Any:
+        from qblox_scheduler import Schedule
+        from qblox_scheduler.operations import (
+            IdlePulse,
+            Measure,
+            Reset,
+            SetClockFrequency,
+            VoltageOffset,
+        )
+        from qblox_scheduler.operations.loop_domains import DType, arange, linspace
+
+        detuning = self.sweep_axes["detuning_hz"]
+        span = float(detuning[-1] - detuning[0])
+        num = self.params.num_points
+        reps = self.params.num_averages
+        drive_amp = self.params.drive_amp
+
+        schedule = Schedule("qubit_spectroscopy_multiplexed")
+        for qubit_name in self.params.qubits:
+            view = self.backend.device.qubit(qubit_name)
+            element = view._element  # driver-internal: ports live on the raw element
+            center = view.drive_freq
+            drive_clock = f"{qubit_name}.01"
+            sub = Schedule(f"qubit_spec_{qubit_name}")
+            with sub.loop(arange(0, reps, 1, DType.NUMBER)):
+                with sub.loop(
+                    linspace(center - span / 2, center + span / 2, num, dtype=DType.FREQUENCY)
+                ) as freq:
+                    # continuous weak drive on the microwave port (cal05 pattern)
+                    sub.add(VoltageOffset(drive_amp, 0, port=element.ports.microwave, clock=drive_clock))
+                    sub.add(SetClockFrequency(clock=drive_clock, frequency=freq))
+                    # let the qubit reach the driven steady state before measuring
+                    sub.add(Reset(qubit_name))
+                    sub.add(
+                        Measure(
+                            qubit_name,
+                            coords={f"frequency_{qubit_name}": freq},
+                            acq_channel=f"S_21_{qubit_name}",
+                        )
+                    )
+                    sub.add(IdlePulse(4e-9))
+            # drive OFF before the next qubit / end of schedule
+            sub.add(VoltageOffset(0, 0, port=element.ports.microwave, clock=drive_clock))
+            sub.add(IdlePulse(4e-9))
+            schedule.add(sub)
+        return schedule
