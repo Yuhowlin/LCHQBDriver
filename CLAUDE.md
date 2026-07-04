@@ -34,6 +34,7 @@ scripts/                         # the COMPLETE Tier-1 (student) surface — no 
   find_runs.py                   # query saved runs (no instrument touched)
   tag_run.py                     # retro-tag / annotate a saved run (no instrument touched)
   device.py                      # current calibration table + change history (old -> new, run_id)
+  check_real_config.py           # self-test vs a REAL dut/hw config (simulated data, temp copies, PASS/FAIL)
   run_resonator_spectroscopy.py  # worked single-experiment example (config-driven)
   ai_loop_demo.py                # shows the catalog -> decide -> run -> find_runs loop an agent would drive
   _cli.py                        # shared engine behind run_experiment.py + the launchers below

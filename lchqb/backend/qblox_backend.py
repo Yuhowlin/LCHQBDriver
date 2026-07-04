@@ -79,16 +79,20 @@ def _read_or_none(view: QubitView, field: str) -> float | None:
 class QbloxDeviceModel(DeviceModel):
     """Wraps a qblox_scheduler ``QuantumDevice``."""
 
-    def __init__(self, quantum_device: Any, config_dir: str | None = None) -> None:
+    def __init__(self, quantum_device: Any, config_file: str | None = None) -> None:
         self._qd = quantum_device
-        self._config_dir = config_dir
+        self._config_file = config_file
 
     def qubit(self, name: str) -> QbloxQubitView:
         return QbloxQubitView(self._qd.get_element(name))
 
     def save(self) -> None:
-        if self._config_dir is not None:
-            self._qd.to_json_file(self._config_dir, add_timestamp=False)
+        # Write back to the EXACT file the device was loaded from. (to_json_file
+        # writes <device_name>.json, which silently diverges from the dut_config.json
+        # the backend loads — calibrations would be stale after a restart.)
+        if self._config_file is not None:
+            with open(self._config_file, "w", encoding="utf-8") as f:
+                f.write(self._qd.to_json())
 
     def snapshot(self) -> dict:
         # Tolerate non-transmon elements (couplers etc.): report None for a field the
@@ -115,7 +119,7 @@ class QbloxBackend(Backend):
             quantum_device_configuration=device_config,
             output_dir=output_dir,
         )
-        self._device = QbloxDeviceModel(self._hw_agent.quantum_device, config_dir=output_dir)
+        self._device = QbloxDeviceModel(self._hw_agent.quantum_device, config_file=device_config)
 
     @classmethod
     def load(cls, config_dir: str = "./qblox_state", output_dir: str | None = None) -> "QbloxBackend":
