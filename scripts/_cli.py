@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 
-from _lab import build_session
+from _lab import build_session, default_qubits
 
 
 def _parse_value(text: str):
@@ -79,7 +79,7 @@ def run_experiment_cli(experiment: str | None = None, doc: str | None = None) ->
     for item in args.set:
         key, _, value = item.partition("=")
         params[key] = _parse_value(value)
-    params.setdefault("qubits", list(sess.device_state()))
+    params.setdefault("qubits", default_qubits(sess))
 
     result = sess.run(name, params, update=not args.no_update, tags=args.tags, note=args.note)
     print(json.dumps(result, indent=2))

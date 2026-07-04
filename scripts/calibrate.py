@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from _lab import build_session
+from _lab import build_session, default_qubits
 
 SEQUENCE = ["resonator_spectroscopy", "qubit_ramsey", "qubit_power_rabi"]
 
@@ -33,7 +33,7 @@ def main() -> int:
     args = parser.parse_args()
 
     sess, _ = build_session(args.config)
-    qubits = args.qubits or list(sess.device_state())
+    qubits = args.qubits or default_qubits(sess)
     steps = [s for s in SEQUENCE if s not in args.skip]
 
     print(f"calibrating {', '.join(qubits)}: {' -> '.join(steps)}\n")

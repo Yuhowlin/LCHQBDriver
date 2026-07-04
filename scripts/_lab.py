@@ -26,6 +26,18 @@ DEMO_QUBITS = {
 }
 
 
+def default_qubits(sess: Session) -> list[str]:
+    """Measurable qubits for 'run on everything' defaults.
+
+    The device tree also contains couplers (lab convention: ``c*``, e.g. ``c12``)
+    modeled as transmon elements without a usable readout port — measuring one
+    fails on hardware (``c12:res_unused was not found in the connectivity``).
+    Only ``q*`` elements are measurement targets by default; pass --qubits to
+    override explicitly.
+    """
+    return [q for q in sess.device_state() if q.startswith("q")]
+
+
 def _qblox_config_dir(cfg: LabConfig, *needed: str) -> Path:
     """Resolve [qblox] config_dir and check the required files exist (clear errors)."""
     config_dir = Path(cfg.extras.get("qblox", {}).get("config_dir", "./qblox_state"))
