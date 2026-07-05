@@ -27,7 +27,8 @@ def main() -> None:
     parser.add_argument("--since", help="ISO date/time lower bound, e.g. 2026-07-01")
     parser.add_argument("--until", help="ISO date/time upper bound")
     parser.add_argument("--outcome", choices=["successful", "partial", "failed", "no_data"])
-    parser.add_argument("--device", help="filter by device name")
+    parser.add_argument("--device", help="filter by device (sample) name")
+    parser.add_argument("--operator", help="filter by who ran it (OS login name)")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--show", metavar="RUN_ID", help="print one run in full (record, params, figures)")
     parser.add_argument("--config", help="lab config path (default: $SCQO_CONFIG or ~/.scqo/config.toml)")
@@ -44,7 +45,8 @@ def main() -> None:
 
     runs = store.find_runs(
         experiment=args.experiment, qubit=args.qubit, tag=args.tag, since=args.since,
-        until=args.until, outcome=args.outcome, device=args.device, limit=args.limit,
+        until=args.until, outcome=args.outcome, device=args.device,
+        operator=args.operator, limit=args.limit,
     )
     if not runs:
         print("no runs match")
@@ -52,7 +54,8 @@ def main() -> None:
     for r in runs:
         tags = ",".join(r["tags"]) if r["tags"] else "-"
         qubits = ",".join(r["qubits"])
-        print(f"{r['run_id']:44s} {r['outcome']:10s} {qubits:12s} {tags:20s} {r['path']}")
+        operator = r.get("operator") or "-"
+        print(f"{r['run_id']:44s} {r['outcome']:10s} {qubits:12s} {operator:10s} {tags:20s} {r['path']}")
     print(f"\n({len(runs)} run(s); data_root = {store.data_root})")
 
 
