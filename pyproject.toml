@@ -7,7 +7,11 @@ requires-python = ">=3.10,<3.13"
 license = { text = "BSD-3-Clause" }
 dependencies = [
     "scqo",                  # the shared, vendor-free experiment API (install editable: pip install -e ../SCQO)
-    "qblox-scheduler",       # Qblox control stack (Schedule, HardwareAgent, QuantumDevice)
+    # Qblox control stack (Schedule, HardwareAgent, QuantumDevice). The pre-release
+    # floor is REQUIRED: PyPI's only non-prerelease is an empty 0.0.0 placeholder that
+    # fails to build, and resolvers only consider pre-releases when the specifier
+    # names one. 1.0.0b4 = the version proven against the lab cluster (2026-07-04).
+    "qblox-scheduler>=1.0.0b4",
     "xarray>=2024.7.0",
     "lmfit>=1.3.3",
     "numpy>=1.26",

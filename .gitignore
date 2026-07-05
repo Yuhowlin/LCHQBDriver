@@ -11,8 +11,8 @@ dist/
 .mypy_cache/
 .ruff_cache/
 
-# Environments
-.venv/
+# Environments (the real ones live at D:\github\.venv-* — never inside a repo)
+.venv*/
 venv/
 env/
 
