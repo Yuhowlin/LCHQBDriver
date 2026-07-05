@@ -1,0 +1,52 @@
+"""Qblox Hahn echo — supplies only ``probe()``.
+
+cal15 reference pattern: Reset -> X90 -> X at ``rel_time=tau/2`` -> X90 at
+``rel_time=tau/2`` -> Measure, sweeping the total idle time tau (loop-variable
+arithmetic: the scheduler evaluates ``tau / 2`` per point). Parameters, the
+exponential-envelope fit and T2_echo reporting are inherited from
+``scqo.experiments.T2Echo``.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from scqo import register
+from scqo.experiments import T2Echo
+
+
+@register
+class QbloxT2Echo(T2Echo):
+    """Build a multiplexed Hahn-echo Schedule for a Qblox cluster."""
+
+    def probe(self) -> Any:
+        from qblox_scheduler import Schedule
+        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X, X90
+        from qblox_scheduler.operations.loop_domains import DType, arange, linspace
+
+        wait_ns = self.sweep_axes["wait_time_ns"]
+        reps = self.params.num_averages
+
+        schedule = Schedule("t2_echo_multiplexed")
+        for qubit_name in self.params.qubits:
+            sub = Schedule(f"echo_{qubit_name}")
+            with sub.loop(arange(0, reps, 1, DType.NUMBER)):
+                with sub.loop(
+                    linspace(wait_ns[0] * 1e-9, wait_ns[-1] * 1e-9, wait_ns.size, dtype=DType.TIME)
+                ) as tau:
+                    sub.add(Reset(qubit_name))
+                    sub.add(X90(qubit_name))
+                    # central pi pulse refocuses quasi-static dephasing; the two
+                    # tau/2 gaps make tau the TOTAL idle time (cal15 pattern)
+                    sub.add(X(qubit=qubit_name), rel_time=tau / 2)
+                    sub.add(X90(qubit_name), rel_time=tau / 2)
+                    sub.add(
+                        Measure(
+                            qubit_name,
+                            coords={f"tau_{qubit_name}": tau},
+                            acq_channel=f"S_21_{qubit_name}",
+                        )
+                    )
+                    sub.add(IdlePulse(4e-9))
+            schedule.add(sub)
+        return schedule
