@@ -67,6 +67,14 @@ class QbloxQubitView(QubitView):
     def pi_amp(self, value: float) -> None:
         _write(self._element.rxy, "amp180", value)
 
+    @property
+    def readout_amp(self) -> float:
+        return _read(self._element.measure, "pulse_amp")
+
+    @readout_amp.setter
+    def readout_amp(self, value: float) -> None:
+        _write(self._element.measure, "pulse_amp", value)
+
 
 def _read_or_none(view: QubitView, field: str) -> float | None:
     """Read a neutral field, returning None if this element doesn't carry it."""
@@ -100,7 +108,10 @@ class QbloxDeviceModel(DeviceModel):
         state: dict[str, dict] = {}
         for name in self._qd.elements:
             view = self.qubit(name)
-            state[name] = {field: _read_or_none(view, field) for field in ("readout_freq", "drive_freq", "pi_amp")}
+            state[name] = {
+                field: _read_or_none(view, field)
+                for field in ("readout_freq", "drive_freq", "pi_amp", "readout_amp")
+            }
         return state
 
 
@@ -153,7 +164,8 @@ class QbloxBackend(Backend):
         import numpy as np
 
         qubits = list(experiment.params.qubits)  # type: ignore[attr-defined]
-        (axis_name, axis_values), = experiment.sweep_axes.items()
+        axes = {name: np.asarray(values) for name, values in experiment.sweep_axes.items()}
+        shape = tuple(len(v) for v in axes.values())
         try:
             i_rows, q_rows = [], []
             for name in qubits:
@@ -164,21 +176,26 @@ class QbloxBackend(Backend):
                         f"(data_vars={list(raw.data_vars)}) — probe/hardware mismatch"
                     )
                 values = np.asarray(raw[key].values).squeeze()
-                if values.ndim != 1 or values.size != len(axis_values):
-                    raise ValueError(
-                        f"{key}: expected {len(axis_values)} points on one swept axis, "
-                        f"got shape {values.shape} (dims={dict(raw.sizes)})"
-                    )
+                if values.shape != shape:
+                    if values.ndim == len(shape) and values.shape == tuple(reversed(shape)):
+                        values = values.T  # labeled axes returned in reversed order
+                    elif values.size == int(np.prod(shape)):
+                        # flat bin order follows the probe's loop nesting (outer axis
+                        # first), which matches sweep_axes insertion order
+                        values = values.reshape(shape)
+                    else:
+                        raise ValueError(
+                            f"{key}: expected shape {shape} for axes {list(axes)}, "
+                            f"got {values.shape} (dims={dict(raw.sizes)})"
+                        )
                 i_rows.append(values.real)
                 q_rows.append(values.imag)
         except (KeyError, ValueError) as err:
             raise type(err)(f"{err}; {_dump_raw(raw)}") from err
+        dims = ("qubit", *axes.keys())
         return xr.Dataset(
-            {
-                "I": (("qubit", axis_name), np.stack(i_rows)),
-                "Q": (("qubit", axis_name), np.stack(q_rows)),
-            },
-            coords={"qubit": qubits, axis_name: np.asarray(axis_values)},
+            {"I": (dims, np.stack(i_rows)), "Q": (dims, np.stack(q_rows))},
+            coords={"qubit": qubits, **axes},
         )
 
 

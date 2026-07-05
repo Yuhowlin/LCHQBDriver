@@ -7,5 +7,7 @@ from . import qubit_power_rabi  # noqa: F401  (import side effect: @register)
 from . import qubit_ramsey  # noqa: F401  (import side effect: @register)
 from . import qubit_spectroscopy  # noqa: F401  (import side effect: @register)
 from . import resonator_spectroscopy  # noqa: F401  (import side effect: @register)
+from . import resonator_spectroscopy_power  # noqa: F401  (import side effect: @register)
+from . import t1_relaxation  # noqa: F401  (import side effect: @register)
 
-__all__ = ["resonator_spectroscopy", "qubit_spectroscopy", "qubit_ramsey", "qubit_power_rabi"]
+__all__ = ["resonator_spectroscopy", "qubit_spectroscopy", "qubit_ramsey", "qubit_power_rabi", "resonator_spectroscopy_power", "t1_relaxation"]

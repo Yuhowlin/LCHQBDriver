@@ -21,8 +21,8 @@ import lchqb.experiments  # noqa: F401  registers the Qblox experiments into the
 
 #: Demo device used when the lab config selects the simulated backend (or is absent).
 DEMO_QUBITS = {
-    "q0": {"readout_freq": 5.95e9, "drive_freq": 3.87e9, "pi_amp": 0.20},
-    "q1": {"readout_freq": 6.05e9, "drive_freq": 4.01e9, "pi_amp": 0.18},
+    "q0": {"readout_freq": 5.95e9, "drive_freq": 3.87e9, "pi_amp": 0.20, "readout_amp": 0.25},
+    "q1": {"readout_freq": 6.05e9, "drive_freq": 4.01e9, "pi_amp": 0.18, "readout_amp": 0.22},
 }
 
 
