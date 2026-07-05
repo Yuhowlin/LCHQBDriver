@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO))  # lchqb without pip install
 try:
     import scqo  # noqa: F401
 except ImportError:  # sibling-repo layout (D:/github)
-    sys.path[:0] = [str(REPO.parent / "SCQO"), str(REPO.parent / "SCqubit-analysis-tool")]
+    sys.path[:0] = [str(REPO.parent / "SCQO"), str(REPO.parent / "scqat")]
 
 
 def _pick(source: Path, pattern: str) -> Path:
