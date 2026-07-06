@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 
 from _lab import build_session, default_qubits
 
@@ -22,18 +23,27 @@ def _parse_value(text: str):
         return text
 
 
-def _schema_epilog(experiment: str) -> str:
-    """Human-readable parameter list from the experiment's pydantic schema."""
-    from scqo import catalog  # experiments already registered via the _lab import
+def _schema_epilog(experiment: str, config_path: str | None) -> str:
+    """Human-readable parameter list from the experiment's pydantic schema, with the
+    lab's standing defaults (~/.scqo/parameters.toml) shown as the effective values."""
+    from scqo import catalog, load_lab_config  # experiments already registered via the _lab import
 
     entry = next((e for e in catalog() if e["name"] == experiment), None)
     if entry is None:
         return ""
+    cfg = load_lab_config(config_path)
+    file_defaults = cfg.parameter_defaults.get(experiment, {})
+    file_label = cfg.parameters_source.name if cfg.parameters_source else "parameters file"
     schema = entry["parameters_schema"]
     required = set(schema.get("required", []))
     lines = [entry["description"], "", "parameters (set with --set KEY=VALUE):"]
     for key, spec in schema.get("properties", {}).items():
-        default = "(required)" if key in required else repr(spec.get("default", ""))
+        if key in file_defaults:
+            default = f"{file_defaults[key]!r} [{file_label}]"
+        elif key in required:
+            default = "(required)"
+        else:
+            default = repr(spec.get("default", ""))
         lines.append(f"  {key:26s} {spec.get('type', ''):8s} default={default:16s} {spec.get('description', '')}")
     return "\n".join(lines)
 
@@ -41,16 +51,18 @@ def _schema_epilog(experiment: str) -> str:
 def run_experiment_cli(experiment: str | None = None, doc: str | None = None) -> int:
     # --help prints during parsing, so the parameter epilog must be decided BEFORE the
     # real parse. In the generic form, peek at the command line for the experiment name
-    # so `run_experiment.py qubit_power_rabi --help` shows that experiment's parameters.
-    help_target = experiment
-    if help_target is None:
-        peek = argparse.ArgumentParser(add_help=False)
+    # so `run_experiment.py qubit_power_rabi --help` shows that experiment's parameters
+    # — and peek --config too, so the epilog marks the standing defaults of the right lab.
+    peek = argparse.ArgumentParser(add_help=False)
+    peek.add_argument("--config")
+    if experiment is None:
         peek.add_argument("experiment", nargs="?")
-        help_target = peek.parse_known_args()[0].experiment
+    peeked = peek.parse_known_args()[0]
+    help_target = experiment or getattr(peeked, "experiment", None)
 
     parser = argparse.ArgumentParser(
         description=doc or __doc__,
-        epilog=_schema_epilog(help_target) if help_target else None,
+        epilog=_schema_epilog(help_target, peeked.config) if help_target else None,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     if experiment is None:
@@ -72,6 +84,7 @@ def run_experiment_cli(experiment: str | None = None, doc: str | None = None) ->
 
     if not name:
         print(f"# lab config: {cfg.source or 'built-in defaults (simulated, nothing saved)'}")
+        print(f"# parameter defaults: {cfg.parameters_source or 'none (code defaults)'}")
         for entry in sess.catalog():
             tag = " [contrib]" if entry.get("maturity") == "contrib" else ""
             print(f"{entry['name'] + tag:32s} {entry['description']}")
@@ -100,8 +113,15 @@ def run_experiment_cli(experiment: str | None = None, doc: str | None = None) ->
     for item in args.set:
         key, _, value = item.partition("=")
         params[key] = _parse_value(value)
-    params.setdefault("qubits", default_qubits(sess))
+    file_defaults = cfg.parameter_defaults.get(name, {})
+    # All-device fallback only when NEITHER the command line nor the parameters file
+    # names qubits — a file-supplied qubit list must survive to the Session merge.
+    if "qubits" not in params and "qubits" not in file_defaults:
+        params["qubits"] = default_qubits(sess)
 
+    applied = sorted(k for k in file_defaults if k not in params)
+    if applied:  # stderr: stdout stays parseable JSON (| jq etc.)
+        print(f"# parameter defaults from {cfg.parameters_source} [{name}]: {', '.join(applied)}", file=sys.stderr)
     result = sess.run(name, params, update=not args.no_update, tags=args.tags, note=args.note)
     print(json.dumps(result, indent=2))
     if "data_path" in result:

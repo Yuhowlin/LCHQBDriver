@@ -5,8 +5,11 @@
     python scripts/calibrate.py --skip resonator_spectroscopy
 
 Sequence: resonator_spectroscopy -> qubit_spectroscopy -> qubit_power_rabi, each with its
-default parameters (need custom parameters? run that step alone via
-``run_experiment.py``). Every step is saved to the datastore and tagged; fitted
+effective defaults — the code defaults overlaid by your ``~/.scqo/parameters.toml``
+tables (need one-off custom parameters? run that step alone via ``run_experiment.py``).
+The qubit list is chosen once for the whole sequence (``--qubits`` or all device
+qubits) and deliberately overrides any per-experiment ``qubits`` in the parameters
+file. Every step is saved to the datastore and tagged; fitted
 values are written back to the device state as each step succeeds. Exits non-zero
 if any step had no successful qubit.
 """
