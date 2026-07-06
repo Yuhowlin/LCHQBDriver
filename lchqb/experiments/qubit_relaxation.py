@@ -1,8 +1,8 @@
-"""Qblox T1 relaxation — supplies only ``probe()``.
+"""Qblox qubit relaxation (T1) — supplies only ``probe()``.
 
 cal14 reference pattern: Reset -> X (pi pulse) -> Measure delayed by the swept wait
 (``rel_time=tau``). Parameters, the exponential fit and reporting are inherited from
-``scqo.experiments.T1Relaxation``.
+``scqo.experiments.QubitRelaxation``.
 """
 
 from __future__ import annotations
@@ -10,11 +10,11 @@ from __future__ import annotations
 from typing import Any
 
 from scqo import register
-from scqo.experiments import T1Relaxation
+from scqo.experiments import QubitRelaxation
 
 
 @register
-class QbloxT1Relaxation(T1Relaxation):
+class QbloxQubitRelaxation(QubitRelaxation):
     """Build a multiplexed T1 Schedule for a Qblox cluster."""
 
     def probe(self) -> Any:
@@ -25,7 +25,7 @@ class QbloxT1Relaxation(T1Relaxation):
         wait_ns = self.sweep_axes["wait_time_ns"]
         reps = self.params.num_averages
 
-        schedule = Schedule("t1_relaxation_multiplexed")
+        schedule = Schedule("qubit_relaxation_multiplexed")
         for qubit_name in self.params.qubits:
             sub = Schedule(f"t1_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):

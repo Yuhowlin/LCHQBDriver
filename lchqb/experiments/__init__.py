@@ -3,8 +3,10 @@
 Add a line here for each new experiment module so its ``@register`` runs.
 """
 
+from . import qubit_echo  # noqa: F401  (import side effect: @register)
 from . import qubit_power_rabi  # noqa: F401  (import side effect: @register)
 from . import qubit_ramsey  # noqa: F401  (import side effect: @register)
+from . import qubit_relaxation  # noqa: F401  (import side effect: @register)
 from . import qubit_spectroscopy  # noqa: F401  (import side effect: @register)
 from . import qubit_spectroscopy_flux  # noqa: F401  (import side effect: @register)
 from . import readout_frequency  # noqa: F401  (import side effect: @register)
@@ -13,8 +15,6 @@ from . import resonator_spectroscopy  # noqa: F401  (import side effect: @regist
 from . import resonator_spectroscopy_flux  # noqa: F401  (import side effect: @register)
 from . import resonator_spectroscopy_power  # noqa: F401  (import side effect: @register)
 from . import single_shot_readout  # noqa: F401  (import side effect: @register)
-from . import t1_relaxation  # noqa: F401  (import side effect: @register)
-from . import t2_echo  # noqa: F401  (import side effect: @register)
 
 __all__ = [
     "resonator_spectroscopy",
@@ -26,7 +26,7 @@ __all__ = [
     "resonator_spectroscopy_power",
     "readout_power",
     "readout_frequency",
-    "t1_relaxation",
-    "t2_echo",
+    "qubit_relaxation",
+    "qubit_echo",
     "single_shot_readout",
 ]

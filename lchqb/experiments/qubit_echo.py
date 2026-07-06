@@ -4,7 +4,7 @@ cal15 reference pattern: Reset -> X90 -> X at ``rel_time=tau/2`` -> X90 at
 ``rel_time=tau/2`` -> Measure, sweeping the total idle time tau (loop-variable
 arithmetic: the scheduler evaluates ``tau / 2`` per point). Parameters, the
 exponential-envelope fit and T2_echo reporting are inherited from
-``scqo.experiments.T2Echo``.
+``scqo.experiments.QubitEcho``.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ from __future__ import annotations
 from typing import Any
 
 from scqo import register
-from scqo.experiments import T2Echo
+from scqo.experiments import QubitEcho
 
 
 @register
-class QbloxT2Echo(T2Echo):
+class QbloxQubitEcho(QubitEcho):
     """Build a multiplexed Hahn-echo Schedule for a Qblox cluster."""
 
     def probe(self) -> Any:
@@ -27,7 +27,7 @@ class QbloxT2Echo(T2Echo):
         wait_ns = self.sweep_axes["wait_time_ns"]
         reps = self.params.num_averages
 
-        schedule = Schedule("t2_echo_multiplexed")
+        schedule = Schedule("qubit_echo_multiplexed")
         for qubit_name in self.params.qubits:
             sub = Schedule(f"echo_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
