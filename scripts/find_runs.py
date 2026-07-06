@@ -29,6 +29,7 @@ def main() -> None:
     parser.add_argument("--outcome", choices=["successful", "partial", "failed", "no_data"])
     parser.add_argument("--device", help="filter by device (sample) name")
     parser.add_argument("--operator", help="filter by who ran it (OS login name)")
+    parser.add_argument("--cooldown", help="filter by cooldown-cycle id, e.g. cd8")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--show", metavar="RUN_ID", help="print one run in full (record, params, figures)")
     parser.add_argument("--config", help="lab config path (default: $SCQO_CONFIG or ~/.scqo/config.toml)")
@@ -46,7 +47,7 @@ def main() -> None:
     runs = store.find_runs(
         experiment=args.experiment, qubit=args.qubit, tag=args.tag, since=args.since,
         until=args.until, outcome=args.outcome, device=args.device,
-        operator=args.operator, limit=args.limit,
+        operator=args.operator, cooldown=args.cooldown, limit=args.limit,
     )
     if not runs:
         print("no runs match")

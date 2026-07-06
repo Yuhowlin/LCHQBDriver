@@ -43,7 +43,8 @@ def main() -> None:
         old = f"{r['old']:.6g}" if isinstance(r["old"], float) else r["old"]
         new = f"{r['new']:.6g}" if isinstance(r["new"], float) else r["new"]
         print(f"{r['timestamp'][:19]}  {r['qubit']:4s} {r['field']:14s} {old} -> {new}"
-              f"  ({r.get('experiment') or '?'}  run={r.get('run_id') or '-'})")
+              f"  ({r.get('experiment') or '?'}  run={r.get('run_id') or '-'}"
+              f"  by={r.get('operator') or '-'})")
     if not records:
         print("no recorded changes yet")
 

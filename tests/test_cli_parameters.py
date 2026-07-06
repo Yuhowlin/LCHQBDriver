@@ -30,7 +30,9 @@ def _run(tmp_path: Path, *args: str, parameters_toml: str | None = None) -> subp
         [sys.executable, str(REPO / "scripts" / "run_experiment.py"), *args],
         capture_output=True,
         text=True,
-        env={**os.environ, "SCQO_CONFIG": str(config)},
+        # SCQO_USER_CONFIG=none: a developer's real ~/.scqo/user.toml must never leak
+        # into these subprocesses (monkeypatching cannot reach them).
+        env={**os.environ, "SCQO_CONFIG": str(config), "SCQO_USER_CONFIG": "none"},
         cwd=REPO,
     )
 

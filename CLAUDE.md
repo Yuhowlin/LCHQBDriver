@@ -33,7 +33,9 @@ scripts/                         # the COMPLETE Tier-1 (student) surface — no 
   calibrate.py                   # daily workflow: resonator_spec -> ramsey -> power_rabi, tagged, summarized
   find_runs.py                   # query saved runs (no instrument touched)
   tag_run.py                     # retro-tag / annotate a saved run (no instrument touched)
-  device.py                      # current calibration table + change history (old -> new, run_id)
+  device.py                      # current calibration table + change history (old -> new, run_id, operator)
+  devices.py                     # Tier-1 menu: selectable backends/samples/instruments + user.toml hint (no instrument touched)
+  cooldown.py                    # cooldown-cycle registry: validate/list, start/end; wiring snapshots hand-edited
   check_real_config.py           # self-test vs a REAL dut/hw config (simulated data, temp copies, PASS/FAIL)
   run_resonator_spectroscopy.py  # worked single-experiment example (config-driven)
   ai_loop_demo.py                # shows the catalog -> decide -> run -> find_runs loop an agent would drive

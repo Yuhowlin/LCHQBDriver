@@ -85,6 +85,7 @@ def run_experiment_cli(experiment: str | None = None, doc: str | None = None) ->
     if not name:
         print(f"# lab config: {cfg.source or 'built-in defaults (simulated, nothing saved)'}")
         print(f"# parameter defaults: {cfg.parameters_source or 'none (code defaults)'}")
+        print(f"# user overlay: {cfg.user_source or 'none'}")
         for entry in sess.catalog():
             tag = " [contrib]" if entry.get("maturity") == "contrib" else ""
             print(f"{entry['name'] + tag:32s} {entry['description']}")
