@@ -27,27 +27,25 @@ lchqb/
     qubit_power_rabi.py      # QbloxQubitPowerRabi(QubitPowerRabi): only probe()
 qblox_config/                # ~ quam_config: device-model + config generation (stubs)
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
-scripts/                         # the COMPLETE Tier-1 (student) surface — no Python needed beyond these
-  _lab.py                        # shared: lab config (~/.scqo/config.toml) -> Session (backend, datastore, tags)
-  run_experiment.py              # run ANY cataloged experiment; every run saved + searchable
-  calibrate.py                   # daily workflow: resonator_spec -> ramsey -> power_rabi, tagged, summarized
-  find_runs.py                   # query saved runs (no instrument touched)
-  tag_run.py                     # retro-tag / annotate a saved run (no instrument touched)
-  device.py                      # current calibration table + change history (old -> new, run_id, operator)
-  devices.py                     # Tier-1 menu: selectable backends/samples/instruments + user.toml hint (no instrument touched)
-  cooldown.py                    # cooldown-cycle registry: validate/list, start/end; wiring snapshots hand-edited
-  sample.py                      # add-a-sample scaffold: paste-ready config/registry snippets + data folder (edits nothing shared)
-  check_real_config.py           # self-test vs a REAL dut/hw config (simulated data, temp copies, PASS/FAIL)
-  run_resonator_spectroscopy.py  # worked single-experiment example (config-driven)
-  ai_loop_demo.py                # shows the catalog -> decide -> run -> find_runs loop an agent would drive
-  _cli.py                        # shared engine behind run_experiment.py + the launchers below
-  experiments/                   # one AUTO-GENERATED launcher per cataloged experiment
-    _sync.py                     #   regenerator (manager runs it after registering an experiment)
-    <name>.py                    #   direct run, qualibrate-node style; --help shows its parameter schema
+lchqb/scqo_backend.py            # the `scqo.backends` entry-point factory: builds the
+                                 #   qblox / qblox_sim Backend for the `scqo` CLI (vendor
+                                 #   imports stay inside the branches)
+scripts/                         # BACKWARD-COMPAT WRAPPERS (≤10 lines each) since scqo
+                                 #   v0.4.0 — the engine lives in scqo/cli; students use
+                                 #   the `scqo` command from any directory
+  _lab.py / _cli.py              # import shims (build_session/default_qubits/engine re-exports)
+  run_experiment.py etc.         # 8 command wrappers -> scqo.cli.<module>.main
+  check_real_config.py           # PER-REPO: self-test vs a REAL dut/hw config (unchanged)
+  run_resonator_spectroscopy.py  # PER-REPO: worked single-experiment example
+  ai_loop_demo.py                # PER-REPO: the catalog -> decide -> run -> find loop
+  experiments/                   # AUTO-GENERATED launchers (regenerate: `scqo sync-launchers`
+    _sync.py                     #   or python scripts/experiments/_sync.py in this venv)
+    <name>.py                    #   direct run; --help shows the parameter schema
 ```
-Students run the scripts and edit **nothing** here: backend choice, data_root, device
-name and default tags come from `~/.scqo/config.toml` (see `scqo.labconfig`). With no
-config everything runs simulated and saves nothing.
+Students use the **`scqo` command** and edit **nothing** here: backend choice, data_root,
+device name and default tags come from `~/.scqo/config.toml` (+ personal `user.toml` /
+`parameters.toml`; see `scqo.labconfig`). With no config everything runs simulated and
+saves nothing.
 
 ## Adding an experiment
 1. Subclass the backend-free experiment from `scqo.experiments.<name>`.

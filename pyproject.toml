@@ -26,6 +26,12 @@ dependencies = [
 [project.entry-points."scqo.experiments"]
 lchqb = "lchqb.experiments"
 
+# Advertise the Qblox BACKEND factory to the scqo CLI: `backend = "qblox"`/"qblox_sim"
+# in the lab config resolves to this (needs scqo >= 0.4.0; re-run `uv pip install -e`
+# after adding — entry points register at install time, not import time).
+[project.entry-points."scqo.backends"]
+qblox = "lchqb.scqo_backend:build_backend"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

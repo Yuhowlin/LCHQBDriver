@@ -4,14 +4,12 @@ Two pi/2 pulses separated by a swept idle time with an artificial drive detuning
 
     python scripts/experiments/qubit_ramsey.py --qubits q0 q1 --tag mytag
     python scripts/experiments/qubit_ramsey.py --help        # full parameter list
+    (equivalent: scqo run qubit_ramsey ... — works from any directory)
 """
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _cli import run_experiment_cli
+from scqo.cli import run_experiment_cli
 
 if __name__ == "__main__":
     sys.exit(run_experiment_cli("qubit_ramsey", doc=__doc__))

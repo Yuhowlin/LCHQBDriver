@@ -4,14 +4,12 @@ Sweep a weak saturation drive around drive_freq and fit the response peaks; the 
 
     python scripts/experiments/qubit_spectroscopy.py --qubits q0 q1 --tag mytag
     python scripts/experiments/qubit_spectroscopy.py --help        # full parameter list
+    (equivalent: scqo run qubit_spectroscopy ... — works from any directory)
 """
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _cli import run_experiment_cli
+from scqo.cli import run_experiment_cli
 
 if __name__ == "__main__":
     sys.exit(run_experiment_cli("qubit_spectroscopy", doc=__doc__))

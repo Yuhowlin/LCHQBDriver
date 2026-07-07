@@ -4,14 +4,12 @@ Sweep drive amplitude (as a factor of the current pi pulse) and fit the Rabi osc
 
     python scripts/experiments/qubit_power_rabi.py --qubits q0 q1 --tag mytag
     python scripts/experiments/qubit_power_rabi.py --help        # full parameter list
+    (equivalent: scqo run qubit_power_rabi ... — works from any directory)
 """
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _cli import run_experiment_cli
+from scqo.cli import run_experiment_cli
 
 if __name__ == "__main__":
     sys.exit(run_experiment_cli("qubit_power_rabi", doc=__doc__))

@@ -4,14 +4,12 @@ Sweep the readout-amplitude prefactor recording every shot's I/Q for |g> and |e>
 
     python scripts/experiments/readout_power.py --qubits q0 q1 --tag mytag
     python scripts/experiments/readout_power.py --help        # full parameter list
+    (equivalent: scqo run readout_power ... — works from any directory)
 """
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _cli import run_experiment_cli
+from scqo.cli import run_experiment_cli
 
 if __name__ == "__main__":
     sys.exit(run_experiment_cli("readout_power", doc=__doc__))
