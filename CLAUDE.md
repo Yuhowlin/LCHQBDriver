@@ -27,9 +27,11 @@ lchqb/
     qubit_power_rabi.py      # QbloxQubitPowerRabi(QubitPowerRabi): only probe()
 qblox_config/                # ~ quam_config: device-model + config generation (stubs)
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
-lchqb/scqo_backend.py            # the `scqo.backends` entry-point factory: builds the
-                                 #   qblox / qblox_sim Backend for the `scqo` CLI (vendor
-                                 #   imports stay inside the branches)
+lchqb/scqo_backend.py            # the `scqo.backends` entry-point factory
+                                 #   build_backend(cfg, setup) (scqo v0.5.0): loads the
+                                 #   setup's instrument_config folder (canonical names
+                                 #   dut_config.json + hw_config.json; loud SystemExit
+                                 #   when missing); vendor imports stay lazy
 scripts/                         # BACKWARD-COMPAT WRAPPERS (≤10 lines each) since scqo
                                  #   v0.4.0 — the engine lives in scqo/cli; students use
                                  #   the `scqo` command from any directory
@@ -42,10 +44,13 @@ scripts/                         # BACKWARD-COMPAT WRAPPERS (≤10 lines each) s
     _sync.py                     #   or python scripts/experiments/_sync.py in this venv)
     <name>.py                    #   direct run; --help shows the parameter schema
 ```
-Students use the **`scqo` command** and edit **nothing** here: backend choice, data_root,
-device name and default tags come from `~/.scqo/config.toml` (+ personal `user.toml` /
-`parameters.toml`; see `scqo.labconfig`). With no config everything runs simulated and
-saves nothing.
+Students use the **`scqo` command** and edit **nothing** here: they select a sample
+(`device = "<name>"` in `~/.scqo/user.toml`; data_root comes from the shared config),
+and which instrument carries it — plus where its `dut_config.json`/`hw_config.json`
+folder lives — is recorded per era in the device's cooldown registry
+(`[[<cycle>.setup]]`; scqo v0.5.0, see `scqo.labconfig`/`SCQO\INSTALL.md` §2). With
+no config everything runs simulated and saves nothing. The `qblox_sim` twin mode was
+retired with v0.5.0 (`simulated` is the practice mode).
 
 ## Adding an experiment
 1. Subclass the backend-free experiment from `scqo.experiments.<name>`.

@@ -1,9 +1,11 @@
 """Qblox backend factory for the scqo CLI (entry-point group ``scqo.backends``, name ``qblox``).
 
-Serves both modes of the family: ``qblox`` (real cluster) and ``qblox_sim`` (the
-virtual twin: your REAL device tree, synthetic data, writebacks persisted to the
-working dut_config.json). Vendor imports stay INSIDE the branches so loading this
-module is cheap and vendor-free.
+Since scqo v0.5.0 the factory receives the device's current SETUP (the era record
+from its cooldown registry): ``setup["instrument_config"]`` is the folder holding the
+vendor config files under canonical names — ``dut_config.json`` + ``hw_config.json``.
+Vendor imports stay INSIDE the function so loading this module is cheap and
+vendor-free. (The virtual-twin ``qblox_sim`` mode was retired with v0.5.0;
+``simulated`` — built into scqo — is the practice mode.)
 """
 
 from __future__ import annotations
@@ -14,37 +16,17 @@ from scqo import LabConfig
 from scqo.backend import Backend
 
 
-def _config_dir(cfg: LabConfig, *needed: str) -> Path:
-    """Resolve [qblox] config_dir and check the required files exist (clear errors)."""
-    config_dir = Path(cfg.extras.get("qblox", {}).get("config_dir", "./qblox_state"))
-    missing = [n for n in needed if not (config_dir / n).is_file()]
+def build_backend(cfg: LabConfig, setup: dict) -> Backend:
+    if setup.get("backend") != "qblox":
+        raise SystemExit(f"the qblox driver serves backend 'qblox', got {setup.get('backend')!r}")
+    folder = Path(setup["instrument_config"])
+    missing = [n for n in ("dut_config.json", "hw_config.json") if not (folder / n).is_file()]
     if missing:
         raise SystemExit(
-            f"backend {cfg.backend!r}: {', '.join(missing)} not found in {config_dir.resolve()}\n"
-            "Point [qblox] config_dir in the lab config at a folder holding your device\n"
-            "config (copy your dut_config_*.json there as dut_config.json" +
-            (" and hw_config_*.json as hw_config.json" if "hw_config.json" in needed else "") + ")."
+            f"qblox setup (since {setup.get('since')}): {', '.join(missing)} not found in {folder}\n"
+            "Copy the vendor files there under canonical names "
+            "(dut_config_*.json -> dut_config.json, hw_config_*.json -> hw_config.json)."
         )
-    return config_dir
+    from lchqb.backend import QbloxBackend
 
-
-def build_backend(cfg: LabConfig) -> Backend:
-    if cfg.backend == "qblox":
-        from lchqb.backend import QbloxBackend
-
-        config_dir = _config_dir(cfg, "dut_config.json", "hw_config.json")
-        return QbloxBackend.load(
-            config_dir=str(config_dir),
-            output_dir=cfg.extras.get("qblox", {}).get("output_dir"),
-        )
-    if cfg.backend == "qblox_sim":
-        # Virtual twin: load the lab's REAL device tree, acquire simulated data.
-        import lchqb.elements  # noqa: F401  register custom element types
-        from qblox_scheduler import QuantumDevice
-
-        from lchqb.backend.qblox_backend import QbloxDeviceModel
-        from scqo.testing import SimulatedBackend
-
-        dut = _config_dir(cfg, "dut_config.json") / "dut_config.json"
-        return SimulatedBackend(QbloxDeviceModel(QuantumDevice.from_json_file(str(dut)), config_file=str(dut)))
-    raise SystemExit(f"the qblox driver builds 'qblox' or 'qblox_sim', got {cfg.backend!r}")
+    return QbloxBackend.load(config_dir=str(folder))
