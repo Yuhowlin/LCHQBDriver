@@ -22,9 +22,8 @@ lchqb/
                              #   wraps qblox_scheduler.HardwareAgent + QuantumDevice
   experiments/
     __init__.py              # imports each experiment module so @register runs (populates catalog)
-    resonator_spectroscopy.py# QbloxResonatorSpectroscopy(ResonatorSpectroscopy): only probe()
-    qubit_ramsey.py          # QbloxQubitRamsey(QubitRamsey): only probe()
-    qubit_power_rabi.py      # QbloxQubitPowerRabi(QubitPowerRabi): only probe()
+    <name>.py                # one module per core experiment (all 12): Qblox<Name>(<Name>) with
+                             #   only probe() — e.g. resonator_spectroscopy, qubit_ramsey, ...
 qblox_config/                # ~ quam_config: device-model + config generation (stubs)
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
 lchqb/scqo_backend.py            # the `scqo.backends` entry-point factory
@@ -73,5 +72,11 @@ c12): `lchqb/elements.py` vendors the lab's `FluxTunableTransmonElement` (from Q
 `QbloxBackend` registers it before loading. `QbloxQubitView` reads/writes both scheduler API
 generations (legacy QCoDeS callables and the pydantic-model plain attributes), and `snapshot()`
 tolerates non-transmon elements. Full scqo Session (simulated data over the real device tree:
-read -> fit -> writeback -> vendor-format save) passes. Remaining for real hardware:
-`QbloxBackend._to_canonical()` against the lab's acquisition output.
+read -> fit -> writeback -> vendor-format save) passes.
+
+**2026-07-05 — hardware-proven:** real measurements run on the lab cluster through the scqo
+path (`_to_canonical` handles the lab's acquisition output, incl. N-D sweeps and per-shot
+contracts); the driver now covers all 12 core experiments. **2026-07-08 — scqo v0.5.0:**
+the entry-point factory is `build_backend(cfg, setup)` — it loads `dut_config.json` +
+`hw_config.json` from the device's current cooldown-setup `instrument_config` folder
+(loud SystemExit when missing); the `qblox_sim` twin mode is retired.
