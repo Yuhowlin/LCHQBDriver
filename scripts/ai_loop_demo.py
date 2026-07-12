@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from _lab import build_session
+from scqo.cli import build_session
 
 
 def agent_decide(catalog: list[dict], device_state: dict) -> tuple[str, dict]:

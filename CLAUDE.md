@@ -27,29 +27,28 @@ lchqb/
 qblox_config/                # ~ quam_config: device-model + config generation (stubs)
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
 lchqb/scqo_backend.py            # the `scqo.backends` entry-point factory
-                                 #   build_backend(cfg, setup) (scqo v0.5.0): loads the
+                                 #   build_backend(cfg, setup): loads the SELECTED named
                                  #   setup's instrument_config folder (canonical names
                                  #   dut_config.json + hw_config.json; loud SystemExit
                                  #   when missing); vendor imports stay lazy
-scripts/                         # BACKWARD-COMPAT WRAPPERS (≤10 lines each) since scqo
-                                 #   v0.4.0 — the engine lives in scqo/cli; students use
-                                 #   the `scqo` command from any directory
-  _lab.py / _cli.py              # import shims (build_session/default_qubits/engine re-exports)
-  run_experiment.py etc.         # 8 command wrappers -> scqo.cli.<module>.main
-  check_real_config.py           # PER-REPO: self-test vs a REAL dut/hw config (unchanged)
-  run_resonator_spectroscopy.py  # PER-REPO: worked single-experiment example
-  ai_loop_demo.py                # PER-REPO: the catalog -> decide -> run -> find loop
-  experiments/                   # AUTO-GENERATED launchers (regenerate: `scqo sync-launchers`
-    _sync.py                     #   or python scripts/experiments/_sync.py in this venv)
-    <name>.py                    #   direct run; --help shows the parameter schema
+scripts/                         # PER-REPO content ONLY — the wrapper layer (command
+                                 #   wrappers, _lab/_cli shims, auto-generated launcher
+                                 #   stubs + `scqo sync-launchers`) was fully RETIRED in
+                                 #   v0.7.0: `scqo run <name>` (etc.) is the one CLI.
+                                 #   Never add wrappers or per-command stubs again.
+  check_real_config.py           # self-test vs a REAL dut/hw config (unchanged)
+  ai_loop_demo.py                # the catalog -> decide -> run -> find loop (imports scqo.cli;
+                                 #   THE worked Session-API example — single-experiment runs
+                                 #   are just `scqo run <name>`)
 ```
 Students use the **`scqo` command** and edit **nothing** here: they select a sample
-(`device = "<name>"` in `~/.scqo/user.toml`; data_root comes from the shared config),
-and which instrument carries it — plus where its `dut_config.json`/`hw_config.json`
-folder lives — is recorded per era in the device's cooldown registry
-(`[[<cycle>.setup]]`; scqo v0.5.0, see `scqo.labconfig`/`SCQO\INSTALL.md` §2). With
-no config everything runs simulated and saves nothing. The `qblox_sim` twin mode was
-retired with v0.5.0 (`simulated` is the practice mode).
+and setup with `scqo user --device <name> [--setup <name>]` (written to their
+`~/.scqo/user.toml`; data_root comes from the shared config). Which instrument
+carries the sample — plus where its `dut_config.json`/`hw_config.json` folder lives —
+is a NAMED setup of the device's ACTIVE cooldown cycle (`[<cycle>.setup.<name>]`;
+scqo v0.7.0, see `scqo.labconfig`/`SCQO\INSTALL.md` §2; a single-setup cycle
+auto-selects). With no config everything runs simulated and saves nothing. The
+`qblox_sim` twin mode was retired with v0.5.0 (`simulated` is the practice mode).
 
 ## Adding an experiment
 1. Subclass the backend-free experiment from `scqo.experiments.<name>`.
@@ -78,5 +77,16 @@ read -> fit -> writeback -> vendor-format save) passes.
 path (`_to_canonical` handles the lab's acquisition output, incl. N-D sweeps and per-shot
 contracts); the driver now covers all 12 core experiments. **2026-07-08 — scqo v0.5.0:**
 the entry-point factory is `build_backend(cfg, setup)` — it loads `dut_config.json` +
-`hw_config.json` from the device's current cooldown-setup `instrument_config` folder
-(loud SystemExit when missing); the `qblox_sim` twin mode is retired.
+`hw_config.json` from the setup's `instrument_config` folder (loud SystemExit when
+missing); the `qblox_sim` twin mode is retired. **2026-07-12 — scqo v0.7.0 (named
+setups):** the setup passed to the factory is the user-SELECTED `[<cycle>.setup.<name>]`
+record (keys: backend/instrument_config/note; `since` dates + port maps retired); runs
+stamp `(cooldown, setup-name)`. The scripts/ WRAPPER LAYER is fully RETIRED (user
+decision — no users yet, so no compat burden): ALL command wrappers, the
+`_lab`/`_cli` import shims, the auto-generated `scripts/experiments/` launcher
+stubs and scqo's `sync-launchers` subcommand are deleted; `scqo run <name>` (and
+`scqo state`/`scqo device`/`scqo user`/...) is the one CLI. scripts/ keeps only
+check_real_config.py + ai_loop_demo.py (now `from scqo.cli import build_session`;
+run_resonator_spectroscopy.py deleted too — redundant with `scqo run`);
+tests/test_wrappers.py became tests/test_scqo_glue.py. Never add
+wrappers or per-command stubs again.

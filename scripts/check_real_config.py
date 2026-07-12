@@ -48,7 +48,7 @@ def main() -> int:
     shutil.copy(_pick(source, "hw_config*.json"), work / "hw_config.json")
     print(f"sandbox: {work}")
     print("  (temporary self-test copies + throwaway run data: your originals and your")
-    print("   real data_root are NOT touched; real measurements use run_experiment.py)")
+    print("   real data_root are NOT touched; real measurements use `scqo run`)")
 
     try:
         import lchqb.elements  # noqa: F401  register the lab's custom element types
