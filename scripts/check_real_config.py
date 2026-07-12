@@ -81,7 +81,9 @@ def main() -> int:
     before = {q: dict(v) for q, v in sess.device_state().items()}
     failures = []
     for experiment in ("resonator_spectroscopy", "qubit_power_rabi"):
-        result = sess.run(experiment, {"qubits": qubits}, tags=["selftest"])
+        # update="apply": this self-test exists to exercise writeback (scqo v0.6.0
+        # defaults to suggest-only, which would leave the device tree untouched).
+        result = sess.run(experiment, {"qubits": qubits}, update="apply", tags=["selftest"])
         ok = all(result["outcomes"].get(q) == "successful" for q in qubits) and not result.get("error")
         print(f"[3/5] {experiment}: {result['outcomes']}" + (f" error={result['error']}" if result.get("error") else ""))
         if not ok:

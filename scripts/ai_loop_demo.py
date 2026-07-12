@@ -36,7 +36,9 @@ def main() -> None:
     # 2. decide -> 3. act -> 4. read result -> (loop)
     for _ in range(1):  # one iteration for the demo; a real loop continues until a goal is met
         experiment, params = agent_decide(catalog, sess.device_state())
-        result = sess.run(experiment, params)
+        # update="apply": an unattended agent applies its own results (scqo v0.6.0);
+        # the default "suggest" would leave the state below unchanged and history empty.
+        result = sess.run(experiment, params, update="apply")
         print(f"ran {experiment} -> success={all(v == 'successful' for v in result['outcomes'].values())}")
         print("extracted:", json.dumps(result["fit"], indent=2))
         if "run_id" in result:  # the loop's episodic memory: every run is findable later
