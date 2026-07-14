@@ -2,7 +2,7 @@
 
 Per amplitude prefactor the readout pulse amplitude is set via
 ``Measure(pulse_amp=...)``, prefactor x the CURRENT ``readout_amp`` (read the same
-way resonator_spectroscopy_power's punchout probe reads it). Each prefactor runs
+way resonator_spectroscopy_power_amp's punchout probe reads it). Each prefactor runs
 two sequential prepared-state blocks (|0>: Reset -> Measure, |1>: Reset -> X ->
 Measure) with the shot loop variable CAPTURED into labeled coords — the
 single_shot_readout per-shot mechanism, so the cluster appends one I/Q point per

@@ -90,3 +90,51 @@ check_real_config.py + ai_loop_demo.py (now `from scqo.cli import build_session`
 run_resonator_spectroscopy.py deleted too — redundant with `scqo run`);
 tests/test_wrappers.py became tests/test_scqo_glue.py. Never add
 wrappers or per-command stubs again.
+
+**2026-07-13 — scqo v0.8.0 (absolute readout power):** new neutral field
+`readout_power_dbm` ↔ `hardware_options.output_att["<ro-port>-<q>.ro"]` (EVEN ints
+0–60 dB, the module's `Multiples(2)` validator) + `measure.pulse_amp`, derived from
+the nominal +5 dBm QRM-RF full scale (`QBLOX_NOMINAL_FULL_SCALE_DBM`; ±few dB —
+frequency-dependent). The agent's `hardware_configuration` dict is the
+AUTHORITATIVE att surface (every run recompiles from it and re-pushes `out<n>_att`;
+a direct qcodes `.set()` is overwritten) — `QbloxBackend.__init__` now validates a
+path-loaded config immediately so it is readable/writable offline.
+`QbloxDeviceModel`/`QbloxQubitView` carry the agent reference; **`save()` writes
+BOTH files** (hw_config.json = runtime truth, the dut's embedded `hardware_config`
+copy is synced first — divergence-trap regression in tests/test_qblox_power.py).
+`power_context(qubits)` stamps att/pulse_amp/nominal-full-scale into run records.
+New probe `resonator_spectroscopy_power_chain` (renamed 2026-07-14 from
+`_absolute`): **chain-stepped** — the core
+run() sweeps power with a PYTHON loop (chain knobs are not FPGA-sweepable),
+re-solving `output_att` + `pulse_amp` (~0.5 full scale) per point and acquiring
+ONE 1D detuning scan per point; this probe is therefore just the plain 1D
+res-spec schedule at the element's CURRENT amplitude (10 µs IdlePulse = the
+depletion wait), called once per power point with `sweep_axes` holding only the
+detuning axis. Uniform-dB power axis by construction (the `_amp` punchout is also
+uniform since 2026-07-14 — see the next bullet).
+
+**2026-07-14 — fast punchout renamed `resonator_spectroscopy_power_amp`** (no
+alias; the single-program FPGA amplitude sweep is the mechanism, vs the
+chain-stepped `resonator_spectroscopy_power_chain`, renamed the same day from
+`_absolute` — class `QbloxResonatorSpectroscopyPowerChain`). Both punchouts are
+named for the knob each sweeps and take IDENTICAL absolute-dBm inputs
+(`min/max_power_dbm`; the relative `_db` params are gone). `_amp` is realized
+SET-TOP: the core run() solves the chain for `max_power_dbm` (recorded,
+auto-reverted), so the probe anchors at the element's CURRENT `readout_amp` = the
+solved top amp (≤ 0.5 by the setter policy, DAC-safe by construction). The
+amplitude axis is **Python-UNROLLED** (first real-hardware chipA run showed the
+old linear amp loop's non-uniform dBm axis; scheduler loop domains are
+LINEAR-only — verified, `LinearDomain` is the only one — so a uniform-dBm grid
+needs geometric amplitudes): one NUMBER→FREQUENCY block per power point, each
+Measure carrying its exact amplitude `top·10^((P−max)/20)` as a literal
+`pulse_amp` + `amp_<q>` coord (the cluster bins by coord VALUE — the same
+mechanism readout_power.py's literal `state` coord uses). Axis = the core's
+uniform dBm grid, identical to QM, endpoints exact; still ONE compile+run
+(program grows ~N_power× — sequencer-memory headroom at large point counts +
+cross-block float-coord binning on the real cluster = hardware prove-out items).
+Loop order is amplitude (unrolled, ascending) → averages → frequency (frequency
+INNERMOST/fastest; acquired axis order (power, detuning); cluster-side bin
+averaging over the middle rep loop = hardware prove-out item),
+and the optional `resonator_relaxation_time_ns` parameter sets
+the between-readout IdlePulse (None keeps the historical 4 ns — likely too short
+on a real resonator; set it on hardware).

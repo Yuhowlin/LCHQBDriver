@@ -4,13 +4,18 @@
 without the Qblox stack installed, and so the simulated path never needs it.
 
 Neutral-name mapping (scqo QubitView -> Qblox DeviceElement):
-    readout_freq  <-> element.clock_freqs.readout
-    drive_freq    <-> element.clock_freqs.f01
-    pi_amp        <-> element.rxy.amp180
+    readout_freq       <-> element.clock_freqs.readout
+    drive_freq         <-> element.clock_freqs.f01
+    pi_amp             <-> element.rxy.amp180
+    readout_amp        <-> element.measure.pulse_amp
+    readout_power_dbm  <-> hardware_options.output_att["<ro-port>-<q>.ro"]
+                            + element.measure.pulse_amp (nominal +5 dBm full scale)
 """
 
 from __future__ import annotations
 
+import math
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import xarray as xr
@@ -19,6 +24,14 @@ from scqo.device import DeviceModel, QubitView
 
 if TYPE_CHECKING:
     from scqo.experiment import Experiment
+
+#: Nominal QRM-RF full-scale output (dBm) at pulse_amp=1.0, output_att=0 — the
+#: datasheet maximum (+5 dBm into 50 Ohm). Frequency/LO/mixer-dependent in reality,
+#: so absolute powers derived from it are good to ±a few dB; a per-setup
+#: photon-number anchor (AC-Stark) is the Phase-3 refinement.
+QBLOX_NOMINAL_FULL_SCALE_DBM = 5.0
+#: The canonical digital operating point: keep the readout amplitude <= 0.5 full scale.
+_CANONICAL_MAX_AMP = 0.5
 
 
 def _read(owner: Any, name: str) -> float:
@@ -37,11 +50,20 @@ def _write(owner: Any, name: str, value: float) -> None:
 
 
 class QbloxQubitView(QubitView):
-    """A scqo QubitView backed by a qblox_scheduler ``DeviceElement``."""
+    """A scqo QubitView backed by a qblox_scheduler ``DeviceElement``.
 
-    def __init__(self, element: Any) -> None:
+    ``hw_agent`` (the backend's HardwareAgent) is needed only by
+    ``readout_power_dbm``: the readout attenuation lives in the hardware
+    compilation config, one level above the element. Its
+    ``hardware_configuration`` dict is the AUTHORITATIVE runtime surface — every
+    ``run()`` recompiles from it and re-pushes ``out<n>_att`` to the module, so
+    writes there survive; a direct qcodes ``.set()`` would be overwritten.
+    """
+
+    def __init__(self, element: Any, hw_agent: Any = None) -> None:
         self.name = element.name
         self._element = element
+        self._hw_agent = hw_agent
 
     @property
     def readout_freq(self) -> float:
@@ -75,29 +97,110 @@ class QbloxQubitView(QubitView):
     def readout_amp(self, value: float) -> None:
         _write(self._element.measure, "pulse_amp", value)
 
+    # ------------------------------------------------------------ absolute power
+    def _port_clock(self) -> str:
+        """The hardware-options key of this element's readout line, e.g. 'q1:res-q1.ro'."""
+        port = getattr(self._element.ports, "readout")
+        port = port() if callable(port) else port
+        return f"{port}-{self.name}.ro"
+
+    def _output_att(self) -> int:
+        """Current readout output attenuation (dB) from the hardware config
+        (missing key -> 0 dB, the instrument default)."""
+        if self._hw_agent is None:
+            raise RuntimeError(
+                f"{self.name}: no HardwareAgent attached — output_att (and so "
+                f"readout_power_dbm) needs the hardware compilation config"
+            )
+        opts = self._hw_agent.hardware_configuration.hardware_options
+        att_map = getattr(opts, "output_att", None) or {}
+        return int(att_map.get(self._port_clock(), 0))
+
+    @property
+    def readout_power_dbm(self) -> float:
+        amp = _read(self._element.measure, "pulse_amp")
+        if amp <= 0:  # log10 domain — the absolute power is undefined, not zero
+            raise ValueError(
+                f"{self.name}: readout pulse_amp is {amp} — absolute power undefined"
+            )
+        return QBLOX_NOMINAL_FULL_SCALE_DBM - self._output_att() + 20.0 * math.log10(amp)
+
+    @readout_power_dbm.setter
+    def readout_power_dbm(self, value: float) -> None:
+        target = float(value)
+        if target > QBLOX_NOMINAL_FULL_SCALE_DBM:
+            raise ValueError(
+                f"{self.name}: target {target} dBm exceeds the chain maximum "
+                f"(+{QBLOX_NOMINAL_FULL_SCALE_DBM} dBm at pulse_amp=1, output_att=0)"
+            )
+        # Largest EVEN attenuation in [0, 60] keeping the amplitude <= 0.5 (the
+        # module validator is Multiples(2), 0..60 — an odd value would only fail
+        # later, at instrument prepare); the amplitude absorbs the exact residual.
+        att_max = QBLOX_NOMINAL_FULL_SCALE_DBM - target + 20.0 * math.log10(_CANONICAL_MAX_AMP)
+        att = int(min(60, max(0, 2 * math.floor(att_max / 2.0))))
+        amp = 10.0 ** ((target - QBLOX_NOMINAL_FULL_SCALE_DBM + att) / 20.0)
+        if amp > _CANONICAL_MAX_AMP:  # only when att=0 cannot absorb it (target > ~-1 dBm)
+            warnings.warn(
+                f"{self.name}: hitting {target} dBm needs pulse_amp={amp:.3f} > "
+                f"{_CANONICAL_MAX_AMP} (output_att already 0) — above the canonical "
+                f"operating point"
+            )
+        if self._hw_agent is None:
+            raise RuntimeError(
+                f"{self.name}: no HardwareAgent attached — cannot write output_att"
+            )
+        opts = self._hw_agent.hardware_configuration.hardware_options
+        if opts.output_att is None:
+            opts.output_att = {}
+        opts.output_att[self._port_clock()] = att  # authoritative: recompiled+pushed each run
+        _write(self._element.measure, "pulse_amp", amp)
+
 
 def _read_or_none(view: QubitView, field: str) -> float | None:
-    """Read a neutral field, returning None if this element doesn't carry it."""
+    """Read a neutral field, returning None if this element doesn't carry it.
+
+    ValueError covers readout_power_dbm on a zero/unset pulse_amp; RuntimeError
+    covers a device model constructed without a HardwareAgent (no hardware config
+    to read the attenuation from)."""
     try:
         return getattr(view, field)
-    except (TypeError, AttributeError, KeyError):
+    except (TypeError, AttributeError, KeyError, ValueError, RuntimeError):
         return None
 
 
 class QbloxDeviceModel(DeviceModel):
-    """Wraps a qblox_scheduler ``QuantumDevice``."""
+    """Wraps a qblox_scheduler ``QuantumDevice`` (+ optionally its HardwareAgent).
 
-    def __init__(self, quantum_device: Any, config_file: str | None = None) -> None:
+    The agent reference (and its hardware config file path) enables the
+    ``readout_power_dbm`` surface — the readout attenuation lives in the hardware
+    compilation config, not on the element. Constructing without an agent keeps
+    the legacy (element-only) behavior working.
+    """
+
+    def __init__(self, quantum_device: Any, config_file: str | None = None,
+                 hw_agent: Any = None, hw_config_file: str | None = None) -> None:
         self._qd = quantum_device
         self._config_file = config_file
+        self._hw_agent = hw_agent
+        self._hw_config_file = hw_config_file
 
     def qubit(self, name: str) -> QbloxQubitView:
-        return QbloxQubitView(self._qd.get_element(name))
+        return QbloxQubitView(self._qd.get_element(name), hw_agent=self._hw_agent)
 
     def save(self) -> None:
-        # Write back to the EXACT file the device was loaded from. (to_json_file
+        # Write back to the EXACT files the device was loaded from. (to_json_file
         # writes <device_name>.json, which silently diverges from the dut_config.json
         # the backend loads — calibrations would be stale after a restart.)
+        hw = self._hw_agent.hardware_configuration if self._hw_agent is not None else None
+        if hw is not None:
+            # The separate hw_config.json is the RUNTIME truth (connect_clusters
+            # overwrites qd.hardware_config from it on every run); keep the copy
+            # embedded in dut_config.json in step BEFORE serializing the quantum
+            # device, so the two files can never drift through a save.
+            self._qd.hardware_config = hw
+            if self._hw_config_file is not None:
+                with open(self._hw_config_file, "w", encoding="utf-8") as f:
+                    f.write(hw.model_dump_json(indent=2))
         if self._config_file is not None:
             with open(self._config_file, "w", encoding="utf-8") as f:
                 f.write(self._qd.to_json())
@@ -110,7 +213,8 @@ class QbloxDeviceModel(DeviceModel):
             view = self.qubit(name)
             state[name] = {
                 field: _read_or_none(view, field)
-                for field in ("readout_freq", "drive_freq", "pi_amp", "readout_amp")
+                for field in ("readout_freq", "drive_freq", "pi_amp", "readout_amp",
+                              "readout_power_dbm")
             }
         return state
 
@@ -130,7 +234,22 @@ class QbloxBackend(Backend):
             quantum_device_configuration=device_config,
             output_dir=output_dir,
         )
-        self._device = QbloxDeviceModel(self._hw_agent.quantum_device, config_file=device_config)
+        # HardwareAgent parses a config PATH into a plain dict; the validated model
+        # only appears once connect_clusters runs. Validate it NOW (the very call
+        # connect_clusters makes) so the hardware config is readable/writable with
+        # no cluster attached — readout_power_dbm and save() need it. A later
+        # connect_clusters re-validates the same object harmlessly.
+        from qblox_scheduler.backends.qblox_backend import QbloxHardwareCompilationConfig
+
+        self._hw_agent._hardware_configuration = QbloxHardwareCompilationConfig.model_validate(
+            self._hw_agent._hardware_configuration
+        )
+        self._device = QbloxDeviceModel(
+            self._hw_agent.quantum_device,
+            config_file=device_config,
+            hw_agent=self._hw_agent,
+            hw_config_file=hardware_config,
+        )
 
     @classmethod
     def load(cls, config_dir: str = "./qblox_state", output_dir: str | None = None) -> "QbloxBackend":
@@ -144,6 +263,24 @@ class QbloxBackend(Backend):
     @property
     def device(self) -> QbloxDeviceModel:
         return self._device
+
+    def power_context(self, qubits: list[str]) -> dict:
+        """Raw readout output-chain values per qubit (run-record provenance only)."""
+        out: dict = {}
+        for name in qubits:
+            try:
+                view = self._device.qubit(name)
+                out[name] = {
+                    "output_att_db": view._output_att(),
+                    "pulse_amp": _read(view._element.measure, "pulse_amp"),
+                    "nominal_full_scale_dbm": QBLOX_NOMINAL_FULL_SCALE_DBM,
+                    "readout_power_dbm": view.readout_power_dbm,
+                    "note": "power derived from the nominal +5 dBm full scale "
+                            "(frequency-dependent, ±a few dB)",
+                }
+            except Exception:  # provenance must never fail a run
+                out[name] = {}
+        return out
 
     def acquire(self, experiment: "Experiment") -> xr.Dataset:
         schedule = experiment.probe()  # native qblox_scheduler.Schedule
