@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import xarray as xr
@@ -200,10 +201,28 @@ class QbloxDeviceModel(DeviceModel):
             self._qd.hardware_config = hw
             if self._hw_config_file is not None:
                 with open(self._hw_config_file, "w", encoding="utf-8") as f:
-                    f.write(hw.model_dump_json(indent=2))
+                    # exclude_none is LOAD-BEARING: pydantic's default dump writes
+                    # every unset Optional as an explicit null, and the qblox
+                    # compiler treats an explicitly-null channel description as
+                    # "user set None" (it lands in model_fields_set on reload) and
+                    # crashes sequencer compilation — whereas an ABSENT key gets a
+                    # default ChannelDescription. Never write nulls.
+                    f.write(hw.model_dump_json(indent=2, exclude_none=True))
         if self._config_file is not None:
             with open(self._config_file, "w", encoding="utf-8") as f:
                 f.write(self._qd.to_json())
+            if hw is not None:
+                # to_json has no exclude_none switch, so it re-embeds the hardware
+                # config WITH explicit nulls (the crash trigger above). Rewrite that
+                # one block from the SAME clean dump hw_config.json got — the two
+                # files then carry identical config content and no nulls survive.
+                import json as _json
+
+                data = _json.loads(Path(self._config_file).read_text(encoding="utf-8"))
+                if "hardware_config" in data:
+                    data["hardware_config"] = _json.loads(hw.model_dump_json(exclude_none=True))
+                    Path(self._config_file).write_text(_json.dumps(data, indent=4),
+                                                       encoding="utf-8")
 
     def snapshot(self) -> dict:
         # Tolerate non-transmon elements (couplers etc.): report None for a field the
@@ -239,10 +258,21 @@ class QbloxBackend(Backend):
         # connect_clusters makes) so the hardware config is readable/writable with
         # no cluster attached — readout_power_dbm and save() need it. A later
         # connect_clusters re-validates the same object harmlessly.
+        import json as _json
+
         from qblox_scheduler.backends.qblox_backend import QbloxHardwareCompilationConfig
 
-        self._hw_agent._hardware_configuration = QbloxHardwareCompilationConfig.model_validate(
+        validated = QbloxHardwareCompilationConfig.model_validate(
             self._hw_agent._hardware_configuration
+        )
+        # NORMALIZE through an exclude_none round-trip: a file carrying explicit
+        # nulls (e.g. one written by a pre-fix save(), or the QBLOX_training
+        # placeholder dumps) marks those fields as SET-to-None, and the compiler's
+        # channel-description lookup then passes None into the sequencer config and
+        # crashes. Dropping the nulls here takes them OUT of model_fields_set, so
+        # poisoned configs load, compile, and self-heal on the next save().
+        self._hw_agent._hardware_configuration = QbloxHardwareCompilationConfig.model_validate(
+            _json.loads(validated.model_dump_json(exclude_none=True))
         )
         self._device = QbloxDeviceModel(
             self._hw_agent.quantum_device,
