@@ -4,9 +4,9 @@ The real CLI coverage lives in SCQO/tests (test_cli_*.py) against the built-in
 simulated backend; this smoke test only proves the driver-side glue: the `scqo`
 command runs end-to-end in the qblox venv, the per-repo demo scripts import
 cleanly from scqo.cli, and the `scqo.backends` entry point resolves to a working
-factory (build_backend(cfg, setup); the setup is a v0.7.0 NAMED record — backend +
-instrument_config + note). The v0.4-era scripts/ wrapper layer and the launcher
-stubs were retired in v0.7.0.
+factory (build_backend(cfg, setup); the setup is a NAMED record — backend + note,
+plus the DERIVED "instrument_config" vendor folder injected by scqo since v0.9).
+The v0.4-era scripts/ wrapper layer and the launcher stubs were retired in v0.7.0.
 """
 
 from __future__ import annotations

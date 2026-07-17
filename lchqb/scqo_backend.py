@@ -1,8 +1,9 @@
 """Qblox backend factory for the scqo CLI (entry-point group ``scqo.backends``, name ``qblox``).
 
 The factory receives the device's SELECTED named setup record from its cooldown
-registry (scqo v0.7.0: ``[<cycle>.setup.<name>]`` — backend + instrument_config +
-note): ``setup["instrument_config"]`` is the folder holding the vendor config files
+registry (``[<cycle>.setup.<name>]`` — backend + note; since scqo v0.9 the vendor
+folder is DERIVED from the keys and injected by ``load_cooldowns``):
+``setup["instrument_config"]`` is the folder holding the vendor config files
 under canonical names — ``dut_config.json`` + ``hw_config.json``. Vendor imports stay
 INSIDE the function so loading this module is cheap and vendor-free. (The
 virtual-twin ``qblox_sim`` mode was retired with v0.5.0; ``simulated`` — built into

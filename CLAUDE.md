@@ -28,9 +28,10 @@ qblox_config/                # ~ quam_config: device-model + config generation (
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
 lchqb/scqo_backend.py            # the `scqo.backends` entry-point factory
                                  #   build_backend(cfg, setup): loads the SELECTED named
-                                 #   setup's instrument_config folder (canonical names
-                                 #   dut_config.json + hw_config.json; loud SystemExit
-                                 #   when missing); vendor imports stay lazy
+                                 #   setup's vendor folder (setup["instrument_config"],
+                                 #   DERIVED <cid>/<setup>/backend_config since scqo v0.9;
+                                 #   canonical names dut_config.json + hw_config.json;
+                                 #   loud SystemExit when missing); vendor imports stay lazy
 scripts/                         # check_real_config.py + ai_loop_demo.py (a worked Session example)
 ```
 Students use the **`scqo` command** and edit **nothing** here: select a setup

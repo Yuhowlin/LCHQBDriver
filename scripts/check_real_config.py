@@ -62,7 +62,7 @@ def main() -> int:
         )
 
     qd = QuantumDevice.from_json_file(str(work / "dut_config.json"))
-    print(f"[1/5] loaded device '{qd.name}' | elements: {list(qd.elements)}")
+    print(f"[1/6] loaded device '{qd.name}' | elements: {list(qd.elements)}")
 
     from lchqb.backend.qblox_backend import QbloxDeviceModel
 
@@ -71,7 +71,7 @@ def main() -> int:
     for name, fields in snap.items():
         print(f"      {name}: {fields}")
     qubits = args.qubits or [n for n in snap if n.startswith("q")]
-    print(f"[2/5] snapshot OK | testing qubits: {qubits}")
+    print(f"[2/6] snapshot OK | testing qubits: {qubits}")
 
     import lchqb.experiments  # noqa: F401
     from scqo import Session
@@ -85,13 +85,13 @@ def main() -> int:
         # defaults to suggest-only, which would leave the device tree untouched).
         result = sess.run(experiment, {"qubits": qubits}, update="apply", tags=["selftest"])
         ok = all(result["outcomes"].get(q) == "successful" for q in qubits) and not result.get("error")
-        print(f"[3/5] {experiment}: {result['outcomes']}" + (f" error={result['error']}" if result.get("error") else ""))
+        print(f"[3/6] {experiment}: {result['outcomes']}" + (f" error={result['error']}" if result.get("error") else ""))
         if not ok:
             failures.append(experiment)
 
     after = sess.device_state()
     moved = [q for q in qubits if after[q] != before[q]]
-    print(f"[4/5] writeback reached the real device tree for: {moved or 'NONE'}")
+    print(f"[4/6] writeback reached the real device tree for: {moved or 'NONE'}")
     if set(moved) != set(qubits):
         failures.append("writeback")
 
@@ -101,9 +101,40 @@ def main() -> int:
     round_trip = all(
         abs(dm2.snapshot()[q]["readout_freq"] - after[q]["readout_freq"]) < 1e-3 for q in qubits
     )
-    print(f"[5/5] vendor-format save/reload round-trip: {'OK' if round_trip else 'MISMATCH'}")
+    print(f"[5/6] vendor-format save/reload round-trip: {'OK' if round_trip else 'MISMATCH'}")
     if not round_trip:
         failures.append("save-roundtrip")
+
+    # OFFLINE COMPILE gate. Parse-grade validation above cannot catch configs that
+    # VALIDATE but cannot COMPILE (e.g. explicit-null channel descriptions crash the
+    # sequencer builder — chipA 2026-07-16): build the real resonator-spectroscopy
+    # probe Schedule against the full backend (HardwareAgent + hw_config.json) and
+    # compile it with no cluster attached — the same SerialCompiler call
+    # HardwareAgent.run makes after connecting. The qblox mirror of the QM side's
+    # offline generate_config() gate.
+    from qcodes import Instrument
+
+    Instrument.close_all()  # QuantumDevice is a qcodes singleton; free 'selftest' names
+    try:
+        from qblox_scheduler.backends.graph_compilation import SerialCompiler
+
+        from lchqb.backend.qblox_backend import QbloxBackend
+        from scqo.registry import get
+
+        backend = QbloxBackend(hardware_config=str(work / "hw_config.json"),
+                               device_config=str(work / "dut_config.json"),
+                               output_dir=str(work / "compile_out"))
+        exp_cls = get("resonator_spectroscopy")
+        exp = exp_cls(backend, exp_cls.Parameters(qubits=qubits, num_points=11, num_averages=2))
+        exp.sweep_axes = exp.define_sweep()
+        schedule = exp.probe()
+        qd_real = backend._hw_agent.quantum_device
+        qd_real.hardware_config = backend._hw_agent.hardware_configuration  # runtime truth
+        SerialCompiler().compile(schedule=schedule, config=qd_real.generate_compilation_config())
+        print("[6/6] offline schedule COMPILE against this config: OK")
+    except Exception as err:  # noqa: BLE001 — a self-test reports, never crashes
+        print(f"[6/6] offline schedule COMPILE FAILED: {type(err).__name__}: {err}")
+        failures.append("compile")
 
     print(f"\nruns saved + indexed under {work / 'data'}: "
           f"{[r['run_id'] for r in sess.find_runs(tag='selftest')]}")
