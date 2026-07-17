@@ -301,7 +301,63 @@ class QbloxBackend(Backend):
         import numpy as np
 
         qubits = list(experiment.params.qubits)  # type: ignore[attr-defined]
+        if experiment.name == "qubit_tomography":
+            n_train = int(experiment.params.num_training_shots)
+            reps = int(experiment.params.num_averages)
+            symmetrized = experiment.params.symmetrized_readout
+            n_sym = 2 if symmetrized else 1
+            n_gc = len(experiment.params.gate_counts)
+            
+            i_tomo_rows, q_tomo_rows = [], []
+            i_train_rows, q_train_rows = [], []
+            
+            try:
+                for name in qubits:
+                    key = f"S_21_{name}"
+                    if key not in raw.data_vars:
+                        raise KeyError(f"Acquisition channel {key!r} not found in raw data.")
+                    flat_data = np.asarray(raw[key].values).flatten()
+                    
+                    train_0 = flat_data[0:n_train]
+                    train_1 = flat_data[n_train:2*n_train]
+                    train_data = np.stack([train_0, train_1], axis=0)
+                    
+                    tomo_flat = flat_data[2*n_train:]
+                    tomo_shape = (3, n_sym, n_gc, reps)
+                    if tomo_flat.size != np.prod(tomo_shape):
+                        raise ValueError(
+                            f"Tomography data size mismatch for {name}: expected {np.prod(tomo_shape)} points, "
+                            f"got {tomo_flat.size}"
+                        )
+                    tomo_data = tomo_flat.reshape(tomo_shape)
+                    
+                    i_train_rows.append(train_data.real)
+                    q_train_rows.append(train_data.imag)
+                    i_tomo_rows.append(tomo_data.real)
+                    q_tomo_rows.append(tomo_data.imag)
+            except (KeyError, ValueError) as err:
+                raise type(err)(f"{err}; {_dump_raw(raw)}") from err
+                
+            return xr.Dataset(
+                {
+                    "I_tomo": (("qubit", "basis", "sym", "gate_count", "shot_idx"), np.stack(i_tomo_rows)),
+                    "Q_tomo": (("qubit", "basis", "sym", "gate_count", "shot_idx"), np.stack(q_tomo_rows)),
+                    "I_train": (("qubit", "prepared_state", "train_shot_idx"), np.stack(i_train_rows)),
+                    "Q_train": (("qubit", "prepared_state", "train_shot_idx"), np.stack(q_train_rows)),
+                },
+                coords={
+                    "qubit": qubits,
+                    "basis": np.array(["x", "y", "z"]),
+                    "sym": np.array(["reg", "inv"] if symmetrized else ["reg"]),
+                    "gate_count": np.array(experiment.params.gate_counts),
+                    "shot_idx": np.arange(reps),
+                    "prepared_state": np.array([0, 1]),
+                    "train_shot_idx": np.arange(n_train),
+                }
+            )
+
         axes = {name: np.asarray(values) for name, values in experiment.sweep_axes.items()}
+
         shape = tuple(len(v) for v in axes.values())
         try:
             i_rows, q_rows = [], []
