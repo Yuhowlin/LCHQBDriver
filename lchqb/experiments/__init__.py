@@ -22,6 +22,8 @@ from . import resonator_spectroscopy_power_amp  # noqa: F401  (import side effec
 from . import single_shot_readout  # noqa: F401  (import side effect: @register)
 from . import qubit_relaxation_flux  # noqa: F401  (import side effect: @register)
 from . import qubit_echo_flux  # noqa: F401  (import side effect: @register)
+from . import qubit_drag_equator  # noqa: F401  (import side effect: @register)
+from . import qubit_drag_alternating  # noqa: F401  (import side effect: @register)
 
 __all__ = [
     "resonator_spectroscopy",
@@ -41,6 +43,8 @@ __all__ = [
     "qubit_sqrb",
     "qubit_relaxation_flux",
     "qubit_echo_flux",
+    "qubit_drag_equator",
+    "qubit_drag_alternating",
 ]
 
 
