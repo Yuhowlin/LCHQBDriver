@@ -37,6 +37,11 @@ class QbloxQubitSpectroscopyFlux(QubitSpectroscopyFlux):
     """Build a multiplexed pulsed flux-spectroscopy Schedule for a Qblox cluster."""
 
     def probe(self) -> Any:
+        if self.params.flux_component is not None:
+            raise NotImplementedError(
+                "flux_component is not realized on the Qblox backend yet: this "
+                "probe sweeps each target's OWN flux line only (an assigned "
+                "source would be silently wrong, so it refuses)")
         from qblox_scheduler import Schedule
         from qblox_scheduler.operations import (
             IdlePulse,
@@ -53,8 +58,8 @@ class QbloxQubitSpectroscopyFlux(QubitSpectroscopyFlux):
         reps = self.params.num_averages
 
         schedule = Schedule("qubit_spectroscopy_flux_multiplexed")
-        for qubit_name in self.params.qubits:
-            view = self.backend.device.qubit(qubit_name)
+        for qubit_name in self.params.targets:
+            view = self.backend.device.component(qubit_name)
             element = view._element  # driver-internal: ports live on the raw element
             flux_port = element.ports.flux
             center = view.drive_freq  # detuning is relative to the CURRENT drive_freq

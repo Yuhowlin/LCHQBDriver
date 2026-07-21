@@ -51,14 +51,14 @@ def backend(tmp_path):
 
 
 def test_getter_math(backend):
-    view = backend.device.qubit("q1")
+    view = backend.device.component("q1")
     view.readout_amp = 0.25
     # P = +5 (nominal full scale) - 10 (fixture att) + 20*log10(0.25)
     assert view.readout_power_dbm == pytest.approx(5.0 - 10.0 + 20 * math.log10(0.25))
 
 
 def test_setter_solves_even_att_and_exact_residual(backend):
-    view = backend.device.qubit("q1")
+    view = backend.device.component("q1")
     opts = backend._hw_agent.hardware_configuration.hardware_options
 
     view.readout_power_dbm = -20.0
@@ -83,7 +83,7 @@ def test_setter_solves_even_att_and_exact_residual(backend):
 
 
 def test_zero_amp_power_undefined(backend):
-    view = backend.device.qubit("q1")
+    view = backend.device.component("q1")
     view.readout_amp = 0.0
     with pytest.raises(ValueError, match="absolute power undefined"):
         _ = view.readout_power_dbm
@@ -96,7 +96,7 @@ def test_save_writes_both_files_consistently(backend, tmp_path):
     from qblox_scheduler.backends.qblox_backend import QbloxHardwareCompilationConfig
     from qcodes import Instrument
 
-    view = backend.device.qubit("q1")
+    view = backend.device.component("q1")
     view.readout_power_dbm = -20.0
     backend.device.save()
 
@@ -117,17 +117,20 @@ def test_save_writes_both_files_consistently(backend, tmp_path):
         device_config=str(tmp_path / "dut_config.json"),
         output_dir=str(tmp_path / "out2"),
     )
-    assert reloaded.device.qubit("q1").readout_power_dbm == pytest.approx(-20.0, abs=1e-9)
+    assert reloaded.device.component("q1").readout_power_dbm == pytest.approx(-20.0, abs=1e-9)
 
 
 def test_power_context_matches_the_view(backend):
-    view = backend.device.qubit("q1")
+    view = backend.device.component("q1")
     view.readout_power_dbm = -20.0
     ctx = backend.power_context(["q1", "nonexistent"])
     assert ctx["q1"]["output_att_db"] == 18
     assert ctx["q1"]["pulse_amp"] == pytest.approx(view.readout_amp)
     assert ctx["q1"]["nominal_full_scale_dbm"] == QBLOX_NOMINAL_FULL_SCALE_DBM
     assert ctx["q1"]["readout_power_dbm"] == pytest.approx(-20.0, abs=1e-9)
+    # the LO the data was taken at (a hand-edited lo_freq is otherwise invisible
+    # in provenance) — the fixture configures 5.8e9 for q1:res-q1.ro
+    assert ctx["q1"]["readout_lo_freq_hz"] == pytest.approx(5.8e9)
     assert ctx["nonexistent"] == {}  # unknown element degrades, never raises
 
 
@@ -153,7 +156,7 @@ def test_absolute_punchout_axis_uniform_and_probe_is_per_point_1d(backend):
     exp = QbloxResonatorSpectroscopyPowerChain(
         backend,
         QbloxResonatorSpectroscopyPowerChain.Parameters(
-            qubits=["q1"], max_power_dbm=-15.0, min_power_dbm=-45.0,
+            targets=["q1"], max_power_dbm=-15.0, min_power_dbm=-45.0,
             num_power_points=11, num_freq_points=5, num_averages=10,
         ),
     )
@@ -167,7 +170,7 @@ def test_absolute_punchout_axis_uniform_and_probe_is_per_point_1d(backend):
 
     # mimic one per-point call: the run loop swaps in the 1D detuning axis and has
     # already solved the chain (device state carries the point's amplitude)
-    view = backend.device.qubit("q1")
+    view = backend.device.component("q1")
     view.readout_power_dbm = -30.0
     exp.sweep_axes = {"detuning_hz": axes["detuning_hz"]}
     schedule = exp.probe()
@@ -205,13 +208,13 @@ def test_power_amp_loop_order_and_relaxation_param(backend):
     )
 
     # mimic run()'s boundary set-top: the chain is solved for max_power_dbm
-    backend.device.qubit("q1").readout_power_dbm = -20.0
+    backend.device.component("q1").readout_power_dbm = -20.0
 
     def build(relax_ns):
         exp = QbloxResonatorSpectroscopyPowerAmp(
             backend,
             QbloxResonatorSpectroscopyPowerAmp.Parameters(
-                qubits=["q1"], num_power_points=5, num_freq_points=3, num_averages=7,
+                targets=["q1"], num_power_points=5, num_freq_points=3, num_averages=7,
                 resonator_relaxation_time_ns=relax_ns,
             ),
         )
@@ -267,7 +270,7 @@ def test_power_amp_loop_order_and_relaxation_param(backend):
         return out
 
     amps = collect_pulse_amps(schedule, [])
-    top_amp = backend.device.qubit("q1").readout_amp  # the solved top amplitude
+    top_amp = backend.device.component("q1").readout_amp  # the solved top amplitude
     assert len(amps) == 5 and len(set(amps)) == 5
     assert amps == sorted(amps)  # ascending: only upward power jumps between blocks
     assert amps[-1] == pytest.approx(top_amp)

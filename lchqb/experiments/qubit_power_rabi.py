@@ -25,8 +25,8 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
         reps = self.params.num_averages
 
         schedule = Schedule("power_rabi_multiplexed")
-        for qubit_name in self.params.qubits:
-            pi_amp = self.backend.device.qubit(qubit_name).pi_amp  # neutral field -> absolute volts
+        for qubit_name in self.params.targets:
+            pi_amp = self.backend.device.component(qubit_name).pi_amp  # neutral field -> absolute volts
             amp_abs = amp_factor * pi_amp
             sub = Schedule(f"power_rabi_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):

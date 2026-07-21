@@ -26,7 +26,7 @@ class QbloxQubitRelaxation(QubitRelaxation):
         reps = self.params.num_averages
 
         schedule = Schedule("qubit_relaxation_multiplexed")
-        for qubit_name in self.params.qubits:
+        for qubit_name in self.params.targets:
             sub = Schedule(f"t1_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(

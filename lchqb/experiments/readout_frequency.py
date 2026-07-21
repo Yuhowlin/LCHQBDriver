@@ -34,8 +34,8 @@ class QbloxReadoutFrequency(ReadoutFrequency):
         num_shots = int(self.params.num_shots)
 
         schedule = Schedule("readout_frequency_multiplexed")
-        for qubit_name in self.params.qubits:
-            view = self.backend.device.qubit(qubit_name)
+        for qubit_name in self.params.targets:
+            view = self.backend.device.component(qubit_name)
             center = view.readout_freq  # detuning is relative to the CURRENT readout_freq
             sub = Schedule(f"readout_frequency_{qubit_name}")
             with sub.loop(

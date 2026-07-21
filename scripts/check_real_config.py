@@ -1,7 +1,7 @@
 """Self-test the scqo stack against a REAL Qblox device config — no hardware needed.
 
     python scripts/check_real_config.py D:\\qpu_data\\SQ_demo\\QBLOX_config
-    python scripts/check_real_config.py <config_dir> --qubits q1 q2
+    python scripts/check_real_config.py <config_dir> --targets q1 q2
 
 Loads your lab's dut/hw config (any ``dut_config*.json`` + ``hw_config*.json`` in the
 given folder), then runs the full scqo pipeline with SIMULATED data over the REAL
@@ -39,7 +39,7 @@ def _pick(source: Path, pattern: str) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("config_dir", help="folder holding dut_config*.json + hw_config*.json")
-    parser.add_argument("--qubits", nargs="+", help="qubits to exercise (default: elements named q*)")
+    parser.add_argument("--targets", nargs="+", help="components to exercise (default: elements named q*)")
     args = parser.parse_args()
 
     source = Path(args.config_dir)
@@ -70,20 +70,24 @@ def main() -> int:
     snap = dm.snapshot()
     for name, fields in snap.items():
         print(f"      {name}: {fields}")
-    qubits = args.qubits or [n for n in snap if n.startswith("q")]
-    print(f"[2/6] snapshot OK | testing qubits: {qubits}")
+    qubits = args.targets or [n for n in snap if n.startswith("q")]
+    print(f"[2/6] snapshot OK | testing targets: {qubits}")
 
     import lchqb.experiments  # noqa: F401
     from scqo import Session
-    from scqo.testing import SimulatedBackend
+    from scqo.testing import SimulatedBackend, demo_roster
 
-    sess = Session(SimulatedBackend(dm), data_root=work / "data", device_name="selftest", state_sync="push")
+    # a Session needs the device's component roster; this throwaway self-test
+    # derives a chipT-shaped one for the discovered transmons (the real roster
+    # lives in <data_root>/<device>/components.toml, used by `scqo run`)
+    sess = Session(SimulatedBackend(dm), demo_roster(tuple(qubits)),
+                   data_root=work / "data", device_name="selftest", state_sync="push")
     before = {q: dict(v) for q, v in sess.device_state().items()}
     failures = []
     for experiment in ("resonator_spectroscopy", "qubit_power_rabi"):
         # update="apply": this self-test exists to exercise writeback (scqo v0.6.0
         # defaults to suggest-only, which would leave the device tree untouched).
-        result = sess.run(experiment, {"qubits": qubits}, update="apply", tags=["selftest"])
+        result = sess.run(experiment, {"targets": qubits}, update="apply", tags=["selftest"])
         ok = all(result["outcomes"].get(q) == "successful" for q in qubits) and not result.get("error")
         print(f"[3/6] {experiment}: {result['outcomes']}" + (f" error={result['error']}" if result.get("error") else ""))
         if not ok:
@@ -125,7 +129,7 @@ def main() -> int:
                                device_config=str(work / "dut_config.json"),
                                output_dir=str(work / "compile_out"))
         exp_cls = get("resonator_spectroscopy")
-        exp = exp_cls(backend, exp_cls.Parameters(qubits=qubits, num_points=11, num_averages=2))
+        exp = exp_cls(backend, exp_cls.Parameters(targets=qubits, num_points=11, num_averages=2))
         exp.sweep_axes = exp.define_sweep()
         schedule = exp.probe()
         qd_real = backend._hw_agent.quantum_device

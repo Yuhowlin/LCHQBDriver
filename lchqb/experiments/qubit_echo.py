@@ -28,7 +28,7 @@ class QbloxQubitEcho(QubitEcho):
         reps = self.params.num_averages
 
         schedule = Schedule("qubit_echo_multiplexed")
-        for qubit_name in self.params.qubits:
+        for qubit_name in self.params.targets:
             sub = Schedule(f"echo_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(
