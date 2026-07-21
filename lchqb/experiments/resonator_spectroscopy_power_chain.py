@@ -39,8 +39,8 @@ class QbloxResonatorSpectroscopyPowerChain(ResonatorSpectroscopyPowerChain):
         reps = self.params.num_averages
 
         schedule = Schedule("resonator_spectroscopy_power_chain_point")
-        for qubit_name in self.params.qubits:
-            view = self.backend.device.qubit(qubit_name)
+        for qubit_name in self.params.targets:
+            view = self.backend.device.component(qubit_name)
             center = view.readout_freq
             sub = Schedule(f"punchout_point_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):

@@ -28,7 +28,7 @@ class QbloxQubitRamsey(QubitRamsey):
         detuning = self.params.frequency_detuning_hz
 
         schedule = Schedule("ramsey_multiplexed")
-        for qubit_name in self.params.qubits:
+        for qubit_name in self.params.targets:
             sub = Schedule(f"ramsey_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(

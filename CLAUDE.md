@@ -18,7 +18,8 @@ experiment API (`D:\github\SCQO`) against the **Qblox** control stack
 ## Layout
 ```
 lchqb/
-  backend/qblox_backend.py   # QbloxBackend (scqo.Backend) + QbloxDeviceModel/QbloxQubitView
+  backend/qblox_backend.py   # QbloxBackend (scqo.Backend) + QbloxDeviceModel/QbloxReadableTransmon
+                             #   (subclasses scqo.device.make_view_base("ReadableTransmon"))
                              #   wraps qblox_scheduler.HardwareAgent + QuantumDevice
   experiments/
     __init__.py              # imports each experiment module so @register runs (populates catalog)
@@ -55,13 +56,25 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
 - `lchqb/elements.py` vendors the lab's `FluxTunableTransmonElement`; keep it in sync
   with upstream. `QbloxBackend` must register it BEFORE `QuantumDevice.from_json_file`,
   or the device tree won't deserialize.
-- `QbloxQubitView` reads/writes BOTH scheduler API generations (legacy QCoDeS callables
-  and the pydantic-model plain attributes).
+- `QbloxReadableTransmon` reads/writes BOTH scheduler API generations (legacy QCoDeS
+  callables and the pydantic-model plain attributes).
 - The agent's `hardware_configuration` dict is AUTHORITATIVE: every run recompiles from
   it and re-pushes attenuations, so a direct qcodes `.set()` is overwritten.
 - `save()` writes BOTH config files (`dut_config.json` + `hw_config.json`); the dut's
   embedded `hardware_config` copy is synced first so they cannot diverge.
 - `readout_power_dbm` ↔ `output_att`, which takes EVEN integers 0–60 dB.
+- `readout_duration_s` ↔ `measure.pulse_duration`, `readout_integration_s` ↔
+  `measure.integration_time`: both positive multiples of 4 ns (REFUSED otherwise),
+  window ≤ pulse (QM-portability contract — the hardware here would allow more),
+  and a pulse shrink clamps the window down with it.
+- Readout/drive LO = `hw_config.json` `hardware_options.modulation_frequencies`
+  (PORT-level, shared by every element on the output; untracked wiring). Hand-edit
+  only while NO session is live — `save()` rewrites the file from the in-memory
+  config and would silently revert the edit — and restart notebook kernels after.
+  `power_context` stamps the readout LO into every run record.
+- Placement rule (which store owns which value): `scqo state --rule` / SCQO TUTORIAL §9.
+  A vendor copy of a neutral/physical value is legal only as a CACHE with a named
+  refresh trigger — the SCQO stores are truth.
 - Two readout-power probes: `resonator_spectroscopy_power_chain` sweeps power with a
   Python loop (one 1D detuning scan per point); `resonator_spectroscopy_power_amp` is a
   single-program FPGA sweep over Python-UNROLLED geometric amplitude blocks, giving a

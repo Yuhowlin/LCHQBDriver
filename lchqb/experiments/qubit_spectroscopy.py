@@ -36,8 +36,8 @@ class QbloxQubitSpectroscopy(QubitSpectroscopy):
         drive_amp = self.params.drive_amp
 
         schedule = Schedule("qubit_spectroscopy_multiplexed")
-        for qubit_name in self.params.qubits:
-            view = self.backend.device.qubit(qubit_name)
+        for qubit_name in self.params.targets:
+            view = self.backend.device.component(qubit_name)
             element = view._element  # driver-internal: ports live on the raw element
             center = view.drive_freq
             drive_clock = f"{qubit_name}.01"

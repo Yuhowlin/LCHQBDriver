@@ -58,8 +58,8 @@ class QbloxResonatorSpectroscopyPowerAmp(ResonatorSpectroscopyPowerAmp):
         idle = (relax_ns * 1e-9) if relax_ns else _DEFAULT_IDLE_S
 
         schedule = Schedule("resonator_spectroscopy_power_amp_multiplexed")
-        for qubit_name in self.params.qubits:
-            view = self.backend.device.qubit(qubit_name)
+        for qubit_name in self.params.targets:
+            view = self.backend.device.component(qubit_name)
             center = view.readout_freq
             # run() solved the chain for max_power_dbm, so readout_amp IS the top
             # amplitude (<= 0.5 by the setter policy — DAC-safe by construction)

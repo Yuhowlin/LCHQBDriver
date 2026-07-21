@@ -35,7 +35,7 @@ class QbloxSingleShotReadout(SingleShotReadout):
         num_shots = int(self.params.num_shots)
 
         schedule = Schedule("single_shot_readout_multiplexed")
-        for qubit_name in self.params.qubits:
+        for qubit_name in self.params.targets:
             sub = Schedule(f"ssro_{qubit_name}")
             # prepared_state 0: Reset -> Measure, one labeled bin per shot
             with sub.loop(arange(0, num_shots, 1, DType.NUMBER)) as shot:

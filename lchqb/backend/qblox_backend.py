@@ -3,13 +3,9 @@
 ``qblox_scheduler`` is imported lazily (inside methods) so that ``import lchqb`` works
 without the Qblox stack installed, and so the simulated path never needs it.
 
-Neutral-name mapping (scqo QubitView -> Qblox DeviceElement):
-    readout_freq       <-> element.clock_freqs.readout
-    drive_freq         <-> element.clock_freqs.f01
-    pi_amp             <-> element.rxy.amp180
-    readout_amp        <-> element.measure.pulse_amp
-    readout_power_dbm  <-> hardware_options.output_att["<ro-port>-<q>.ro"]
-                            + element.measure.pulse_amp (nominal +5 dBm full scale)
+Neutral-name mapping: declared ONCE in ``lchqb/backend/fieldmap.py`` (the catalog
+``scqo state --fields`` renders; drift-tested per category against scqo's pushed
+fields). The executable conversions are ``QbloxReadableTransmon``'s properties below.
 """
 
 from __future__ import annotations
@@ -21,7 +17,10 @@ from typing import TYPE_CHECKING, Any
 
 import xarray as xr
 from scqo.backend import Backend
-from scqo.device import DeviceModel, QubitView
+from scqo.device import ComponentInfo, DeviceModel, make_view_base
+from scqo.fieldmap import Unrealized, VendorBinding, VendorOnly
+
+from lchqb.backend.fieldmap import FIELD_BINDINGS, UNREALIZED, VENDOR_ONLY
 
 if TYPE_CHECKING:
     from scqo.experiment import Experiment
@@ -50,8 +49,25 @@ def _write(owner: Any, name: str, value: float) -> None:
         setattr(owner, name, float(value))
 
 
-class QbloxQubitView(QubitView):
-    """A scqo QubitView backed by a qblox_scheduler ``DeviceElement``.
+def _grid_s(value: float, what: str) -> float:
+    """Validate a seconds duration as a positive multiple of 4 ns and return it
+    re-derived from the integer grid (so both backends store the identical
+    canonical float). 4 ns is the PORTABLE neutral contract — QM's
+    pulse/integration-weights resolution; the scheduler itself is finer, but an
+    off-grid value here would be unrealizable on the QM backend."""
+    ns = float(value) * 1e9
+    grid = round(ns)
+    if abs(ns - grid) > 1e-3 or grid <= 0 or grid % 4:
+        raise ValueError(
+            f"{what}={value!r} s: must be a positive multiple of 4 ns (the "
+            f"portable pulse/weights grid; no silent rounding)")
+    # / 1e9 (exact), never * 1e-9: division rounds correctly, so the stored float
+    # equals the parsed literal (2000 -> exactly 2e-6) on BOTH backends.
+    return grid / 1e9
+
+
+class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
+    """The scqo ReadableTransmon view backed by a qblox_scheduler ``DeviceElement``.
 
     ``hw_agent`` (the backend's HardwareAgent) is needed only by
     ``readout_power_dbm``: the readout attenuation lives in the hardware
@@ -97,6 +113,38 @@ class QbloxQubitView(QubitView):
     @readout_amp.setter
     def readout_amp(self, value: float) -> None:
         _write(self._element.measure, "pulse_amp", value)
+
+    # ------------------------------------------- readout duration / window
+    @property
+    def readout_duration_s(self) -> float:
+        return _read(self._element.measure, "pulse_duration")
+
+    @readout_duration_s.setter
+    def readout_duration_s(self, value: float) -> None:
+        new_s = _grid_s(value, "readout_duration_s")
+        _write(self._element.measure, "pulse_duration", new_s)
+        # Portable contract (QM parity — its weights cannot span past the pulse):
+        # the window never outlives the pulse, so a shrink clamps it down; the
+        # scqo layer re-reads it and records the echo as a COUPLED change.
+        if _read(self._element.measure, "integration_time") > new_s:
+            _write(self._element.measure, "integration_time", new_s)
+
+    @property
+    def readout_integration_s(self) -> float:
+        return _read(self._element.measure, "integration_time")
+
+    @readout_integration_s.setter
+    def readout_integration_s(self, value: float) -> None:
+        new_s = _grid_s(value, "readout_integration_s")
+        duration = _read(self._element.measure, "pulse_duration")
+        if new_s > duration + 1e-12:
+            raise ValueError(
+                f"{self.name}: readout_integration_s={value!r} s exceeds the "
+                f"readout pulse ({duration} s). The hardware here would allow "
+                f"it, but QM cannot integrate past the pulse, so the portable "
+                f"contract is window <= duration - raise readout_duration_s "
+                f"first (or set both in one command; the pulse pushes first)")
+        _write(self._element.measure, "integration_time", new_s)
 
     # ------------------------------------------------------------ absolute power
     def _port_clock(self) -> str:
@@ -156,8 +204,25 @@ class QbloxQubitView(QubitView):
         opts.output_att[self._port_clock()] = att  # authoritative: recompiled+pushed each run
         _write(self._element.measure, "pulse_amp", amp)
 
+    # ------------------------------------------------------- unrealized fields
+    # idle_flux_v is declared Unrealized in lchqb.backend.fieldmap.UNREALIZED —
+    # make_view_base declares the abstract pair (the category schema), so a
+    # concrete raising implementation is required for the class to instantiate.
+    _IDLE_FLUX_V_UNREALIZED = (
+        "idle_flux_v is Unrealized on the Qblox backend: no flux-tunable device "
+        "yet; the setter lands with the first flux chip"
+    )
 
-def _read_or_none(view: QubitView, field: str) -> float | None:
+    @property
+    def idle_flux_v(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._IDLE_FLUX_V_UNREALIZED}")
+
+    @idle_flux_v.setter
+    def idle_flux_v(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._IDLE_FLUX_V_UNREALIZED}")
+
+
+def _read_or_none(view: QbloxReadableTransmon, field: str) -> float | None:
     """Read a neutral field, returning None if this element doesn't carry it.
 
     ValueError covers readout_power_dbm on a zero/unset pulse_amp; RuntimeError
@@ -185,8 +250,15 @@ class QbloxDeviceModel(DeviceModel):
         self._hw_agent = hw_agent
         self._hw_config_file = hw_config_file
 
-    def qubit(self, name: str) -> QbloxQubitView:
-        return QbloxQubitView(self._qd.get_element(name), hw_agent=self._hw_agent)
+    def component(self, name: str) -> QbloxReadableTransmon:
+        return QbloxReadableTransmon(self._qd.get_element(name), hw_agent=self._hw_agent)
+
+    def components(self) -> dict[str, ComponentInfo]:
+        # Derived inventory (the doctor's WITNESS, never truth): element_type
+        # cannot distinguish couplers, the roster arbitrates. Edges exist in the
+        # dut config but pairs are Phase 2 — ignored here.
+        return {name: ComponentInfo("ReadableTransmon", operations=("rx", "readout"))
+                for name in self._qd.elements}
 
     def save(self) -> None:
         # Write back to the EXACT files the device was loaded from. (to_json_file
@@ -229,11 +301,12 @@ class QbloxDeviceModel(DeviceModel):
         # element doesn't carry rather than crashing on a real lab device tree.
         state: dict[str, dict] = {}
         for name in self._qd.elements:
-            view = self.qubit(name)
+            view = self.component(name)
             state[name] = {
                 field: _read_or_none(view, field)
                 for field in ("readout_freq", "drive_freq", "pi_amp", "readout_amp",
-                              "readout_power_dbm")
+                              "readout_power_dbm", "readout_duration_s",
+                              "readout_integration_s")
             }
         return state
 
@@ -294,12 +367,25 @@ class QbloxBackend(Backend):
     def device(self) -> QbloxDeviceModel:
         return self._device
 
+    def field_bindings(self) -> dict[str, dict[str, VendorBinding]]:
+        """The declared per-category neutral-field catalog (lchqb.backend.fieldmap)
+        — the conversion CODE is QbloxReadableTransmon above; this is its description."""
+        return {category: dict(bindings) for category, bindings in FIELD_BINDINGS.items()}
+
+    def unrealized(self) -> dict[str, dict[str, Unrealized]]:
+        """Pushed fields this backend cannot realize, per category (see fieldmap)."""
+        return {category: dict(entries) for category, entries in UNREALIZED.items()}
+
+    def vendor_only(self) -> dict[str, VendorOnly]:
+        """Qblox-unique calibration knobs, vendor-owned (see fieldmap)."""
+        return dict(VENDOR_ONLY)
+
     def power_context(self, qubits: list[str]) -> dict:
         """Raw readout output-chain values per qubit (run-record provenance only)."""
         out: dict = {}
         for name in qubits:
             try:
-                view = self._device.qubit(name)
+                view = self._device.component(name)
                 out[name] = {
                     "output_att_db": view._output_att(),
                     "pulse_amp": _read(view._element.measure, "pulse_amp"),
@@ -308,6 +394,15 @@ class QbloxBackend(Backend):
                     "note": "power derived from the nominal +5 dBm full scale "
                             "(frequency-dependent, ±a few dB)",
                 }
+                # The readout LO the data was taken at: a hand-edited lo_freq is
+                # otherwise invisible in provenance (readout_freq alone cannot
+                # explain a jump across the IF window). Only when configured — a
+                # missing entry must not degrade the rest of the context.
+                opts = self._hw_agent.hardware_configuration.hardware_options
+                mf = getattr(opts, "modulation_frequencies", None) or {}
+                lo = getattr(mf.get(view._port_clock()), "lo_freq", None)
+                if lo is not None:
+                    out[name]["readout_lo_freq_hz"] = float(lo)
             except Exception:  # provenance must never fail a run
                 out[name] = {}
         return out
@@ -319,7 +414,7 @@ class QbloxBackend(Backend):
 
     @staticmethod
     def _to_canonical(raw: xr.Dataset, experiment: "Experiment") -> xr.Dataset:
-        """Relabel a raw Qblox dataset into scqo's convention: dims (qubit, <sweep>), vars I/Q.
+        """Relabel a raw Qblox dataset into scqo's convention: dims (target, <sweep>), vars I/Q.
 
         The probes label every acquisition ``acq_channel=f"S_21_{qubit}"`` with the
         sweep loop variable as a per-point coordinate (cal02 reference pattern), so
@@ -330,7 +425,7 @@ class QbloxBackend(Backend):
         """
         import numpy as np
 
-        qubits = list(experiment.params.qubits)  # type: ignore[attr-defined]
+        qubits = list(experiment.params.targets)  # type: ignore[attr-defined]
         axes = {name: np.asarray(values) for name, values in experiment.sweep_axes.items()}
         shape = tuple(len(v) for v in axes.values())
         try:
@@ -359,10 +454,10 @@ class QbloxBackend(Backend):
                 q_rows.append(values.imag)
         except (KeyError, ValueError) as err:
             raise type(err)(f"{err}; {_dump_raw(raw)}") from err
-        dims = ("qubit", *axes.keys())
+        dims = ("target", *axes.keys())
         return xr.Dataset(
             {"I": (dims, np.stack(i_rows)), "Q": (dims, np.stack(q_rows))},
-            coords={"qubit": qubits, **axes},
+            coords={"target": qubits, **axes},
         )
 
 

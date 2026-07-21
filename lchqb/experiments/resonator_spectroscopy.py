@@ -28,8 +28,8 @@ class QbloxResonatorSpectroscopy(ResonatorSpectroscopy):
         reps = self.params.num_averages
 
         schedule = Schedule("resonator_spectroscopy_multiplexed")
-        for qubit_name in self.params.qubits:
-            element = self.backend.device.qubit(qubit_name)  # QbloxQubitView
+        for qubit_name in self.params.targets:
+            element = self.backend.device.component(qubit_name)  # QbloxReadableTransmon
             center = element.readout_freq
             sub = Schedule(f"res_spec_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):

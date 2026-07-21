@@ -23,7 +23,7 @@ def agent_decide(catalog: list[dict], device_state: dict) -> tuple[str, dict]:
     context, then emit a tool call. Here we hard-code one decision.
     """
     _ = catalog, device_state
-    return "resonator_spectroscopy", {"qubits": list(device_state), "frequency_span_hz": 15e6}
+    return "resonator_spectroscopy", {"targets": list(device_state), "frequency_span_hz": 15e6}
 
 
 def main() -> None:
