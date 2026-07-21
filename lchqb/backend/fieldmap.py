@@ -65,6 +65,12 @@ UNREALIZED: dict[str, dict[str, Unrealized]] = {
         "idle_flux_v": Unrealized(
             "ReadableTransmon", "idle_flux_v",
             "no flux-tunable device yet; the setter lands with the first flux chip"),
+        "drag_beta": Unrealized(
+            "ReadableTransmon", "drag_beta",
+            "no DRAG calibration wired for Qblox yet: rxy.beta exists (VENDOR_ONLY "
+            "below) but no scqo experiment writes it here (the drag experiments are "
+            "QM-only). Promote to a real rxy.beta binding when a Qblox DRAG "
+            "experiment lands"),
     },
 }
 
@@ -137,13 +143,11 @@ VENDOR_ONLY: dict[str, VendorOnly] = {
         doc="pi/x180 pulse length - neutral pi_duration_s candidate (seconds; "
             "chipA: 200 ns here vs 32 ns on QM - genuinely per-chain "
             "calibrated). QM counterpart: xy.operations['x180'].length (ns)"),
-    "drag_beta": VendorOnly(
-        path="element.rxy.beta", unit="s", kind="candidate",
-        doc="DRAG derivative scale of the pi pulse - neutral candidate with "
-            "pre-declared convention: anharmonicity-normalized lambda bound to "
-            "x180; the setter will derive beta from lambda and physical.json "
-            "anharmonicity. QM counterpart: operations['x180_DragCosine'].alpha "
-            "(dimensionless, per-gate - different math convention)"),
+    # NOTE: drag_beta was promoted to a neutral ReadableTransmon field (v0.10.x,
+    # QM-realized). It is Unrealized on Qblox for now (see UNREALIZED above) -
+    # element.rxy.beta is the vendor knob that WOULD realize it; the binding lands
+    # when a Qblox DRAG experiment is written. Removed from VENDOR_ONLY to avoid
+    # colliding with the tracked neutral field name.
     "acq_threshold": VendorOnly(
         path="element.measure.acq_threshold", unit="", kind="vendor",
         doc="single-shot discrimination threshold in the rotated acquisition IQ "
