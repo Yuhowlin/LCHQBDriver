@@ -221,6 +221,22 @@ class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
     def idle_flux_v(self, value: float) -> None:
         raise NotImplementedError(f"{self.name}: {self._IDLE_FLUX_V_UNREALIZED}")
 
+    # drag_beta is Unrealized on Qblox (fieldmap.UNREALIZED): rxy.beta exists but
+    # no scqo experiment calibrates it here yet. Concrete raising pair required
+    # because make_view_base declares the abstract property for every pushed field.
+    _DRAG_BETA_UNREALIZED = (
+        "drag_beta is Unrealized on the Qblox backend: no DRAG calibration wired "
+        "here yet (the drag experiments are QM-only)"
+    )
+
+    @property
+    def drag_beta(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._DRAG_BETA_UNREALIZED}")
+
+    @drag_beta.setter
+    def drag_beta(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._DRAG_BETA_UNREALIZED}")
+
 
 def _read_or_none(view: QbloxReadableTransmon, field: str) -> float | None:
     """Read a neutral field, returning None if this element doesn't carry it.
