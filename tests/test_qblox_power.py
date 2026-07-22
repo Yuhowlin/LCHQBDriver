@@ -367,3 +367,51 @@ def test_power_amp_loop_order_and_relaxation_param(backend):
     # rebuild backend state is unchanged; parameter set -> 20 us idle
     schedule2 = build(relax_ns=20000.0)
     assert set(idle_durations(schedule2)) == {2e-5}
+
+
+def test_flux_probe_uses_cw_saturation_not_x(backend):
+    """The flux probe now drives with a weak CW saturation VoltageOffset carrying
+    view.drive_amp (the drive_power_dbm residual on spec_amp) instead of a
+    calibrated X pulse; readout still follows the flux return to idle (QM parity).
+    Structure only — a full compile needs flux-port wiring the minimal fixture lacks."""
+    from lchqb.experiments.qubit_spectroscopy_flux import QbloxQubitSpectroscopyFlux
+
+    view = backend.device.component("q1")
+    view.drive_power_dbm = -33.0  # parks spec_amp; the probe reads view.drive_amp
+    drive_amp = view.drive_amp
+
+    exp = QbloxQubitSpectroscopyFlux(
+        backend,
+        QbloxQubitSpectroscopyFlux.Parameters(
+            targets=["q1"], num_freq_points=3, num_flux_points=5, num_averages=7,
+        ),
+    )
+    exp.sweep_axes = exp.define_sweep()
+    schedule = exp.probe()
+
+    def walk(sched, out):
+        for op in sched.operations.values():
+            body = getattr(op, "body", None)  # LoopOperation wraps a sub-schedule
+            if body is not None and hasattr(body, "operations"):
+                walk(body, out)
+            elif hasattr(op, "operations"):
+                walk(op, out)
+            else:
+                out.append(op)
+        return out
+
+    ops = walk(schedule, [])
+    names = {type(op).__name__ for op in ops}
+    assert "X" not in names  # the calibrated pi pulse is gone
+    assert {"VoltageOffset", "SetClockFrequency", "Measure"} <= names
+
+    offsets = [op.data["pulse_info"] for op in ops if type(op).__name__ == "VoltageOffset"]
+    # a CW saturation VoltageOffset on the microwave port carries the solved drive_amp
+    assert any(
+        o["port"] == "q1:mw" and o["clock"] == "q1.01"
+        and o["offset_path_I"] == pytest.approx(drive_amp)
+        for o in offsets
+    ), "expected a saturation VoltageOffset(drive_amp) on the microwave port"
+    # ...and it is turned back OFF on the same port (safety), and the flux line is driven
+    assert any(o["port"] == "q1:mw" and o["offset_path_I"] == 0 for o in offsets)
+    assert any(o["port"] == "q1:fl" for o in offsets)

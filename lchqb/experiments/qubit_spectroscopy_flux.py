@@ -1,12 +1,18 @@
 """Qblox pulsed flux qubit spectroscopy — supplies only ``probe()``.
 
-cal07 reference pattern: per flux point set a ``VoltageOffset`` on the qubit's own
+cal07b-style CW pattern: per flux point set a ``VoltageOffset`` on the qubit's own
 flux line, step the drive clock across the detuning window around the current
-``drive_freq``, apply an X probe pulse, then return the flux to its idle value
-BEFORE measuring (clean readout at the calibrated operating point). Flux safety:
-every subschedule ends with the flux line back at 0 V (cal07 pattern).
+``drive_freq``, apply a weak CW SATURATION drive (``view.drive_amp`` — the
+``drive_power_dbm`` residual parked on ``spec.spec_amp``) held through the driven
+dwell, then return the flux to its idle value BEFORE measuring (clean readout at
+the calibrated operating point, matching the QM flux probe). Unlike the old cal07
+X-pulse version this needs no calibrated pi, so it works during bring-up. Flux
+safety: every subschedule ends with the drive off and the flux line back at 0 V.
+
 Parameters, the transmon-arch fit and the sweet-spot/Ej_sum reporting are
-inherited from ``scqo.experiments.QubitSpectroscopyFlux``.
+inherited from ``scqo.experiments.QubitSpectroscopyFlux``. The core ``run()``
+parks ``drive_power_dbm`` (a recorded set -> revert) before this probe reads
+``view.drive_amp``.
 """
 
 from __future__ import annotations
@@ -49,7 +55,6 @@ class QbloxQubitSpectroscopyFlux(QubitSpectroscopyFlux):
             Reset,
             SetClockFrequency,
             VoltageOffset,
-            X,
         )
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
@@ -62,7 +67,9 @@ class QbloxQubitSpectroscopyFlux(QubitSpectroscopyFlux):
             view = self.backend.device.component(qubit_name)
             element = view._element  # driver-internal: ports live on the raw element
             flux_port = element.ports.flux
+            microwave_port = element.ports.microwave
             center = view.drive_freq  # detuning is relative to the CURRENT drive_freq
+            drive_amp = float(view.drive_amp)  # run() parked the solved spec_amp residual
             drive_clock = f"{qubit_name}.01"
             idle_flux = _idle_flux(element)
             sub = Schedule(f"qubit_spec_flux_{qubit_name}")
@@ -83,12 +90,15 @@ class QbloxQubitSpectroscopyFlux(QubitSpectroscopyFlux):
                         # 1. bias the qubit's own flux line for this point
                         sub.add(VoltageOffset(flux, 0, port=flux_port))
                         sub.add(IdlePulse(4e-9))
-                        # 2. thermalize at the biased flux
-                        sub.add(Reset(qubit_name))
-                        # 3. probe pulse at the shifted drive frequency
+                        # 2. weak CW saturation drive at the shifted frequency, held
+                        #    through the driven dwell (Reset = the steady-state wait,
+                        #    the cal05/cal07b idiom) — no calibrated pi needed
                         sub.add(SetClockFrequency(clock=drive_clock, frequency=freq))
-                        sub.add(X(qubit=qubit_name))
-                        # 4. flux back to idle BEFORE the readout (cal07 pattern)
+                        sub.add(VoltageOffset(drive_amp, 0, port=microwave_port, clock=drive_clock))
+                        sub.add(Reset(qubit_name))
+                        sub.add(VoltageOffset(0, 0, port=microwave_port, clock=drive_clock))
+                        # 3. flux back to idle BEFORE the readout (measure at the
+                        #    calibrated operating point, matching the QM flux probe)
                         sub.add(VoltageOffset(idle_flux, 0, port=flux_port))
                         sub.add(IdlePulse(4e-9))
                         sub.add(IdlePulse(61e-9))  # QRC-with-QCM settling fudge (cal07)
@@ -102,7 +112,8 @@ class QbloxQubitSpectroscopyFlux(QubitSpectroscopyFlux):
                                 acq_channel=f"S_21_{qubit_name}",
                             )
                         )
-            # SAFETY: flux line back to 0 V at the end of the subschedule (cal07)
+            # SAFETY: drive off + flux line back to 0 V at the end of the subschedule
+            sub.add(VoltageOffset(0, 0, port=microwave_port, clock=drive_clock))
             sub.add(VoltageOffset(0.0, 0, port=flux_port))
             sub.add(IdlePulse(4e-9))
             schedule.add(sub)
