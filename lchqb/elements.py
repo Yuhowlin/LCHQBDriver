@@ -1,10 +1,14 @@
 """Custom Qblox device elements used by this lab's dut configs.
 
-Copied from QBLOX_training/docs/applications/superconducting/custom_elements.py
-(the read-only reference repo) so LCHQBDriver is self-contained at runtime:
-``QuantumDevice.from_json_file`` can only deserialize a dut config whose
-``element_type`` classes are imported (registered) first — ``QbloxBackend``
-imports this module before loading. Keep in sync with the training repo's copy.
+Originally copied from QBLOX_training/docs/applications/superconducting/
+custom_elements.py (the read-only reference repo) so LCHQBDriver is
+self-contained at runtime: ``QuantumDevice.from_json_file`` can only deserialize
+a dut config whose ``element_type`` classes are imported (registered) first —
+``QbloxBackend`` imports this module before loading. This module now deliberately
+EXTENDS the training-repo copy: ``SpectroscopyProperties`` / ``LCHTransmonElement``
+(the ``spec_amp`` slot behind the neutral ``drive_amp`` / ``drive_power_dbm``
+pair) are lab additions with no upstream counterpart; when syncing, diff only the
+vendored ``FluxProperties`` / ``PiHalfProperties`` bodies.
 
 NOTE: imports qblox_scheduler — never import this module at package import time
 (only inside backend methods), so ``import lchqb`` stays vendor-free.
@@ -44,10 +48,34 @@ class PiHalfProperties(SchedulerSubmodule):
     )
 
 
-class FluxTunableTransmonElement(BasicTransmonElement):
+class SpectroscopyProperties(SchedulerSubmodule):
+    """Submodule for the saturation (spec) drive — the qubit_spectroscopy stimulus.
+
+    ``spec_amp`` is the stored saturation-drive amplitude (fraction of full
+    scale, the CW ``VoltageOffset`` value the probe plays): the neutral
+    ``drive_amp``, and the residual the ``drive_power_dbm`` chain solve writes."""
+
+    spec_amp: float = Parameter(
+        label="Saturation (spec) Drive Amplitude", unit="", initial_value=math.nan,
+        vals=Numbers(allow_nan=True)
+    )
+
+
+class LCHTransmonElement(BasicTransmonElement):
+    """The lab's base transmon element: BasicTransmonElement + the ``spec``
+    submodule (saturation-drive slot). Fixed-frequency chips use this type
+    directly; flux-tunable ones use the subclass below."""
+
+    element_type: Literal["LCHTransmonElement"] = "LCHTransmonElement"
+
+    spec: SpectroscopyProperties
+
+
+class FluxTunableTransmonElement(LCHTransmonElement):
     """A custom device element for all flux-tunable elements (Qubits or Couplers).
 
-    Inherits all standard properties from BasicTransmonElement.
+    Inherits all standard properties from BasicTransmonElement, plus the lab's
+    ``spec`` submodule via LCHTransmonElement.
     """
 
     element_type: Literal["FluxTunableTransmonElement"] = "FluxTunableTransmonElement"

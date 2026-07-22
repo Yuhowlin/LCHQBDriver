@@ -90,6 +90,54 @@ def test_zero_amp_power_undefined(backend):
     assert backend.device.snapshot()["q1"]["readout_power_dbm"] is None
 
 
+def test_drive_getter_math(backend):
+    view = backend.device.component("q1")
+    view.drive_amp = 0.25
+    # P = +5 (nominal full scale) - 18 (fixture drive att) + 20*log10(0.25)
+    assert view.drive_power_dbm == pytest.approx(5.0 - 18.0 + 20 * math.log10(0.25))
+
+
+def test_drive_setter_solves_even_att_and_exact_residual(backend):
+    view = backend.device.component("q1")
+    opts = backend._hw_agent.hardware_configuration.hardware_options
+
+    view.drive_power_dbm = -33.0
+    att = opts.output_att["q1:mw-q1.01"]
+    assert att == 30 and att % 2 == 0 and 0 <= att <= 60
+    amp = view.drive_amp
+    assert 0.397 < amp <= 0.5  # the canonical operating window when att is unclamped
+    assert view.drive_power_dbm == pytest.approx(-33.0, abs=1e-9)  # exact round-trip
+    # the readout chain is untouched by a drive solve (its own port-clock key)
+    assert opts.output_att["q1:res-q1.ro"] == 10
+
+    view.drive_power_dbm = -80.0  # far below reach: att clamps at 60, amp absorbs
+    assert opts.output_att["q1:mw-q1.01"] == 60
+    assert view.drive_power_dbm == pytest.approx(-80.0, abs=1e-9)
+    assert view.drive_amp < 0.397  # below the canonical window, by necessity
+
+    with pytest.warns(UserWarning, match="canonical operating point"):
+        view.drive_power_dbm = 0.0  # att already 0: amp must exceed 0.5
+    assert opts.output_att["q1:mw-q1.01"] == 0
+    assert view.drive_amp == pytest.approx(10 ** (-5.0 / 20.0))
+
+    with pytest.raises(ValueError, match="exceeds the chain maximum"):
+        view.drive_power_dbm = 6.0
+
+
+def test_unset_spec_amp_drive_power_undefined(backend):
+    """The demo dut carries no spec block: spec_amp deserializes as NaN, so BOTH
+    drive fields read unknown (never a NaN leaking through log10 into the config)
+    until drive_power_dbm (or drive_amp) is written."""
+    view = backend.device.component("q1")
+    assert math.isnan(view._element.spec.spec_amp)
+    with pytest.raises(ValueError, match="absolute drive power undefined"):
+        _ = view.drive_power_dbm
+    with pytest.raises(ValueError, match="spec_amp is unset"):
+        _ = view.drive_amp
+    snap = backend.device.snapshot()["q1"]
+    assert snap["drive_amp"] is None and snap["drive_power_dbm"] is None
+
+
 def test_save_writes_both_files_consistently(backend, tmp_path):
     """save() writes hw_config.json (the runtime truth) AND keeps the copy embedded
     in dut_config.json in step — the divergence-trap regression."""
@@ -98,19 +146,24 @@ def test_save_writes_both_files_consistently(backend, tmp_path):
 
     view = backend.device.component("q1")
     view.readout_power_dbm = -20.0
+    view.drive_power_dbm = -33.0
     backend.device.save()
 
-    # the separate hw config re-validates and carries the new att (from_file returns
+    # the separate hw config re-validates and carries the new atts (from_file returns
     # a plain dict in this scheduler version — validate explicitly, as the agent does)
     hw = QbloxHardwareCompilationConfig.model_validate(
         QbloxHardwareCompilationConfig.from_file(str(tmp_path / "hw_config.json"))
     )
     assert hw.hardware_options.output_att["q1:res-q1.ro"] == 18
+    assert hw.hardware_options.output_att["q1:mw-q1.01"] == 30
     # the embedded dut copy matches (no drift through a save)
     dut = json.loads((tmp_path / "dut_config.json").read_text(encoding="utf-8"))
     assert dut["hardware_config"]["hardware_options"]["output_att"]["q1:res-q1.ro"] == 18
+    assert dut["hardware_config"]["hardware_options"]["output_att"]["q1:mw-q1.01"] == 30
+    # ...and the solved spec_amp persisted on the element (dut side)
+    assert dut["elements"]["q1"]["spec"]["spec_amp"] == pytest.approx(10 ** (-8.0 / 20.0))
 
-    # a fresh backend from the saved pair reproduces the power
+    # a fresh backend from the saved pair reproduces both powers
     Instrument.close_all()
     reloaded = QbloxBackend(
         hardware_config=str(tmp_path / "hw_config.json"),
@@ -118,11 +171,13 @@ def test_save_writes_both_files_consistently(backend, tmp_path):
         output_dir=str(tmp_path / "out2"),
     )
     assert reloaded.device.component("q1").readout_power_dbm == pytest.approx(-20.0, abs=1e-9)
+    assert reloaded.device.component("q1").drive_power_dbm == pytest.approx(-33.0, abs=1e-9)
 
 
 def test_power_context_matches_the_view(backend):
     view = backend.device.component("q1")
     view.readout_power_dbm = -20.0
+    view.drive_power_dbm = -33.0
     ctx = backend.power_context(["q1", "nonexistent"])
     assert ctx["q1"]["output_att_db"] == 18
     assert ctx["q1"]["pulse_amp"] == pytest.approx(view.readout_amp)
@@ -131,7 +186,22 @@ def test_power_context_matches_the_view(backend):
     # the LO the data was taken at (a hand-edited lo_freq is otherwise invisible
     # in provenance) — the fixture configures 5.8e9 for q1:res-q1.ro
     assert ctx["q1"]["readout_lo_freq_hz"] == pytest.approx(5.8e9)
+    # the drive chain rides along (fixture: att written by the solve, LO 4.5e9)
+    assert ctx["q1"]["drive_output_att_db"] == 30
+    assert ctx["q1"]["spec_amp"] == pytest.approx(view.drive_amp)
+    assert ctx["q1"]["drive_power_dbm"] == pytest.approx(-33.0, abs=1e-9)
+    assert ctx["q1"]["drive_lo_freq_hz"] == pytest.approx(4.5e9)
     assert ctx["nonexistent"] == {}  # unknown element degrades, never raises
+
+
+def test_power_context_readout_survives_unset_spec(backend):
+    """An element with no seeded spec_amp still reports its full readout chain —
+    the drive block must never take the readout provenance down with it."""
+    view = backend.device.component("q1")
+    view.readout_power_dbm = -20.0
+    ctx = backend.power_context(["q1"])
+    assert ctx["q1"]["readout_power_dbm"] == pytest.approx(-20.0, abs=1e-9)
+    assert "drive_power_dbm" not in ctx["q1"]  # unknown, not NaN
 
 
 def test_catalog_registers_absolute_punchout():

@@ -30,8 +30,31 @@ if TYPE_CHECKING:
 #: so absolute powers derived from it are good to ±a few dB; a per-setup
 #: photon-number anchor (AC-Stark) is the Phase-3 refinement.
 QBLOX_NOMINAL_FULL_SCALE_DBM = 5.0
-#: The canonical digital operating point: keep the readout amplitude <= 0.5 full scale.
+#: The canonical digital operating point: keep the pulse amplitude <= 0.5 full
+#: scale (shared by the readout AND drive chain solves).
 _CANONICAL_MAX_AMP = 0.5
+
+
+def _solve_att(name: str, target: float, what: str) -> tuple[int, float]:
+    """Solve an output chain for an absolute port power: the largest EVEN
+    attenuation in [0, 60] keeping the amplitude <= 0.5 (the module validator is
+    Multiples(2), 0..60 — an odd value would only fail later, at instrument
+    prepare); the amplitude absorbs the exact residual."""
+    if target > QBLOX_NOMINAL_FULL_SCALE_DBM:
+        raise ValueError(
+            f"{name}: target {target} dBm exceeds the chain maximum "
+            f"(+{QBLOX_NOMINAL_FULL_SCALE_DBM} dBm at amplitude 1, output_att=0)"
+        )
+    att_max = QBLOX_NOMINAL_FULL_SCALE_DBM - target + 20.0 * math.log10(_CANONICAL_MAX_AMP)
+    att = int(min(60, max(0, 2 * math.floor(att_max / 2.0))))
+    amp = 10.0 ** ((target - QBLOX_NOMINAL_FULL_SCALE_DBM + att) / 20.0)
+    if amp > _CANONICAL_MAX_AMP:  # only when att=0 cannot absorb it (target > ~-1 dBm)
+        warnings.warn(
+            f"{name}: hitting {target} dBm needs {what}={amp:.3f} > "
+            f"{_CANONICAL_MAX_AMP} (output_att already 0) — above the canonical "
+            f"operating point"
+        )
+    return att, amp
 
 
 def _read(owner: Any, name: str) -> float:
@@ -153,17 +176,33 @@ class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
         port = port() if callable(port) else port
         return f"{port}-{self.name}.ro"
 
-    def _output_att(self) -> int:
-        """Current readout output attenuation (dB) from the hardware config
-        (missing key -> 0 dB, the instrument default)."""
+    def _drive_port_clock(self) -> str:
+        """The hardware-options key of this element's drive line, e.g. 'q1:mw-q1.01'."""
+        port = getattr(self._element.ports, "microwave")
+        port = port() if callable(port) else port
+        return f"{port}-{self.name}.01"
+
+    def _output_att(self, port_clock: str | None = None) -> int:
+        """Current output attenuation (dB) of a line from the hardware config
+        (default: the readout line; missing key -> 0 dB, the instrument default)."""
         if self._hw_agent is None:
             raise RuntimeError(
-                f"{self.name}: no HardwareAgent attached — output_att (and so "
-                f"readout_power_dbm) needs the hardware compilation config"
+                f"{self.name}: no HardwareAgent attached — output_att (and so the "
+                f"absolute powers) needs the hardware compilation config"
             )
         opts = self._hw_agent.hardware_configuration.hardware_options
         att_map = getattr(opts, "output_att", None) or {}
-        return int(att_map.get(self._port_clock(), 0))
+        return int(att_map.get(port_clock or self._port_clock(), 0))
+
+    def _write_output_att(self, port_clock: str, att: int) -> None:
+        if self._hw_agent is None:
+            raise RuntimeError(
+                f"{self.name}: no HardwareAgent attached — cannot write output_att"
+            )
+        opts = self._hw_agent.hardware_configuration.hardware_options
+        if opts.output_att is None:
+            opts.output_att = {}
+        opts.output_att[port_clock] = att  # authoritative: recompiled+pushed each run
 
     @property
     def readout_power_dbm(self) -> float:
@@ -176,33 +215,47 @@ class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
 
     @readout_power_dbm.setter
     def readout_power_dbm(self, value: float) -> None:
-        target = float(value)
-        if target > QBLOX_NOMINAL_FULL_SCALE_DBM:
-            raise ValueError(
-                f"{self.name}: target {target} dBm exceeds the chain maximum "
-                f"(+{QBLOX_NOMINAL_FULL_SCALE_DBM} dBm at pulse_amp=1, output_att=0)"
-            )
-        # Largest EVEN attenuation in [0, 60] keeping the amplitude <= 0.5 (the
-        # module validator is Multiples(2), 0..60 — an odd value would only fail
-        # later, at instrument prepare); the amplitude absorbs the exact residual.
-        att_max = QBLOX_NOMINAL_FULL_SCALE_DBM - target + 20.0 * math.log10(_CANONICAL_MAX_AMP)
-        att = int(min(60, max(0, 2 * math.floor(att_max / 2.0))))
-        amp = 10.0 ** ((target - QBLOX_NOMINAL_FULL_SCALE_DBM + att) / 20.0)
-        if amp > _CANONICAL_MAX_AMP:  # only when att=0 cannot absorb it (target > ~-1 dBm)
-            warnings.warn(
-                f"{self.name}: hitting {target} dBm needs pulse_amp={amp:.3f} > "
-                f"{_CANONICAL_MAX_AMP} (output_att already 0) — above the canonical "
-                f"operating point"
-            )
-        if self._hw_agent is None:
-            raise RuntimeError(
-                f"{self.name}: no HardwareAgent attached — cannot write output_att"
-            )
-        opts = self._hw_agent.hardware_configuration.hardware_options
-        if opts.output_att is None:
-            opts.output_att = {}
-        opts.output_att[self._port_clock()] = att  # authoritative: recompiled+pushed each run
+        att, amp = _solve_att(self.name, float(value), "pulse_amp")
+        self._write_output_att(self._port_clock(), att)
         _write(self._element.measure, "pulse_amp", amp)
+
+    # The drive twin, anchored to the stored SATURATION (spec) amplitude
+    # (element.spec.spec_amp — the CW VoltageOffset the qubit_spectroscopy probe
+    # plays). The drive output_att is PORT-level and shared by every xy pulse:
+    # while it is off its standing value the stored pi_amp means a different
+    # power (qubit_spectroscopy's run() sets and exactly reverts it; the even
+    # discrete att + verbatim amplitude restore make the revert lossless).
+    @property
+    def drive_amp(self) -> float:
+        amp = _read(self._element.spec, "spec_amp")
+        if math.isnan(amp):
+            raise ValueError(
+                f"{self.name}: spec_amp is unset (NaN) — seed it (or set "
+                f"drive_power_dbm, which writes it as the chain residual)"
+            )
+        return amp
+
+    @drive_amp.setter
+    def drive_amp(self, value: float) -> None:
+        _write(self._element.spec, "spec_amp", value)
+
+    @property
+    def drive_power_dbm(self) -> float:
+        amp = _read(self._element.spec, "spec_amp")
+        # NaN would silently propagate through log10 into the config — refuse it
+        # exactly like a zero/negative amplitude (power undefined, not a number).
+        if not (amp > 0) or not math.isfinite(amp):
+            raise ValueError(
+                f"{self.name}: spec_amp is {amp} — absolute drive power undefined"
+            )
+        return (QBLOX_NOMINAL_FULL_SCALE_DBM - self._output_att(self._drive_port_clock())
+                + 20.0 * math.log10(amp))
+
+    @drive_power_dbm.setter
+    def drive_power_dbm(self, value: float) -> None:
+        att, amp = _solve_att(self.name, float(value), "spec_amp")
+        self._write_output_att(self._drive_port_clock(), att)
+        _write(self._element.spec, "spec_amp", amp)
 
     # ------------------------------------------------------- unrealized fields
     # idle_flux_v is declared Unrealized in lchqb.backend.fieldmap.UNREALIZED —
@@ -320,7 +373,8 @@ class QbloxDeviceModel(DeviceModel):
             view = self.component(name)
             state[name] = {
                 field: _read_or_none(view, field)
-                for field in ("readout_freq", "drive_freq", "pi_amp", "readout_amp",
+                for field in ("readout_freq", "drive_freq", "pi_amp",
+                              "drive_amp", "drive_power_dbm", "readout_amp",
                               "readout_power_dbm", "readout_duration_s",
                               "readout_integration_s")
             }
@@ -397,7 +451,7 @@ class QbloxBackend(Backend):
         return dict(VENDOR_ONLY)
 
     def power_context(self, qubits: list[str]) -> dict:
-        """Raw readout output-chain values per qubit (run-record provenance only)."""
+        """Raw readout + drive chain values per qubit (run-record provenance only)."""
         out: dict = {}
         for name in qubits:
             try:
@@ -421,6 +475,23 @@ class QbloxBackend(Backend):
                     out[name]["readout_lo_freq_hz"] = float(lo)
             except Exception:  # provenance must never fail a run
                 out[name] = {}
+            # The drive chain behind drive_power_dbm — same never-fail rule, and
+            # independent of the readout block (an element without a spec slot
+            # still reports its readout chain).
+            try:
+                view = self._device.component(name)
+                out[name].update({
+                    "drive_output_att_db": view._output_att(view._drive_port_clock()),
+                    "spec_amp": _read(view._element.spec, "spec_amp"),
+                    "drive_power_dbm": view.drive_power_dbm,
+                })
+                opts = self._hw_agent.hardware_configuration.hardware_options
+                mf = getattr(opts, "modulation_frequencies", None) or {}
+                lo = getattr(mf.get(view._drive_port_clock()), "lo_freq", None)
+                if lo is not None:
+                    out[name]["drive_lo_freq_hz"] = float(lo)
+            except Exception:  # provenance must never fail a run
+                pass
         return out
 
     def acquire(self, experiment: "Experiment") -> xr.Dataset:

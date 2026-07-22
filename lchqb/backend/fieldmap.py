@@ -26,6 +26,25 @@ FIELD_BINDINGS: dict[str, dict[str, VendorBinding]] = {
             path="element.clock_freqs.f01", unit="Hz"),
         "pi_amp": VendorBinding(
             path="element.rxy.amp180", unit=""),
+        "drive_amp": VendorBinding(
+            path="element.spec.spec_amp", unit="",
+            note="the saturation (spec) drive amplitude - the CW VoltageOffset "
+                 "fraction the qubit_spectroscopy probe plays, and the "
+                 "drive_power_dbm chain solve's residual (lchqb.elements "
+                 "LCHTransmonElement's spec submodule)"),
+        "drive_power_dbm": VendorBinding(
+            path='hardware_options.output_att["<mw-port>-<qubit>.01"] '
+                 "+ element.spec.spec_amp",
+            unit="dB + amp",
+            convert="solve the DRIVE chain: largest EVEN output_att in [0, 60] keeping "
+                    "spec_amp <= 0.5 against the nominal +5 dBm full scale; spec_amp "
+                    "absorbs the exact residual (absolute power good to +/- a few dB)",
+            coupled=("drive_amp",),
+            note="the drive output_att is PORT-level and shared by every xy pulse: "
+                 "while it is off its standing value the stored pi_amp means a "
+                 "different power (qubit_spectroscopy sets it and reverts exactly); "
+                 "EVEN integers 0-60 dB, hardware compilation config authoritative",
+        ),
         "readout_amp": VendorBinding(
             path="element.measure.pulse_amp", unit=""),
         "readout_power_dbm": VendorBinding(
@@ -132,12 +151,14 @@ VENDOR_ONLY: dict[str, VendorOnly] = {
             "no-live-session edit rule as the LOs"),
     "drive_output_att": VendorOnly(
         path='hardware_options.output_att["<mw-port>-<qubit>.01"]',
-        unit="dB", kind="vendor",
-        doc="the untracked DRIVE-chain scale that makes pi_amp portable=False "
-            "(chipA: 18 dB) - no neutral drive_power_dbm twin exists (optional "
-            "future engineering). Changing it silently re-scales what every "
-            "stored pi_amp means. QM counterpart: xy opx_output "
-            "full_scale_power_dbm"),
+        unit="dB", kind="realizer",
+        doc="the coarse DRIVE power knob (EVEN integers 0-60, PORT-level - "
+            "shared by every xy pulse) - it REALIZES the tracked "
+            "drive_power_dbm (binding above). Change power with "
+            "`scqo set QUBIT.drive_power_dbm=...` (solves the chain, keeps "
+            "drive_amp coupled, recorded); a direct edit silently re-scales "
+            "what every stored pi_amp AND the absolute drive power mean. "
+            "QM counterpart: xy opx_output full_scale_power_dbm"),
     "x180_duration": VendorOnly(
         path="element.rxy.duration", unit="s", kind="candidate",
         doc="pi/x180 pulse length - neutral pi_duration_s candidate (seconds; "

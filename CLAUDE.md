@@ -53,16 +53,23 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
 - QM sibling (do not import from it): `D:\github\LCHQMDriver`.
 
 ## Hardware invariants
-- `lchqb/elements.py` vendors the lab's `FluxTunableTransmonElement`; keep it in sync
-  with upstream. `QbloxBackend` must register it BEFORE `QuantumDevice.from_json_file`,
-  or the device tree won't deserialize.
+- `lchqb/elements.py` vendors the lab's element types and deliberately EXTENDS the
+  QBLOX_training copy: `LCHTransmonElement` adds the `spec` submodule (`spec_amp`,
+  the saturation-drive slot behind `drive_amp`/`drive_power_dbm`);
+  `FluxTunableTransmonElement` subclasses it. `QbloxBackend` must register them
+  BEFORE `QuantumDevice.from_json_file`, or the device tree won't deserialize.
+  A dut config missing the `spec` block still loads (spec_amp defaults NaN =
+  field unknown until seeded).
 - `QbloxReadableTransmon` reads/writes BOTH scheduler API generations (legacy QCoDeS
   callables and the pydantic-model plain attributes).
 - The agent's `hardware_configuration` dict is AUTHORITATIVE: every run recompiles from
   it and re-pushes attenuations, so a direct qcodes `.set()` is overwritten.
 - `save()` writes BOTH config files (`dut_config.json` + `hw_config.json`); the dut's
   embedded `hardware_config` copy is synced first so they cannot diverge.
-- `readout_power_dbm` ↔ `output_att`, which takes EVEN integers 0–60 dB.
+- `readout_power_dbm` ↔ readout `output_att` + `measure.pulse_amp`;
+  `drive_power_dbm` ↔ drive-port `output_att` + `element.spec.spec_amp`
+  (`output_att` takes EVEN integers 0–60 dB; both solves keep the amplitude
+  ≤ 0.5, the amplitude carries the exact residual).
 - `readout_duration_s` ↔ `measure.pulse_duration`, `readout_integration_s` ↔
   `measure.integration_time`: both positive multiples of 4 ns (REFUSED otherwise),
   window ≤ pulse (QM-portability contract — the hardware here would allow more),
@@ -82,4 +89,4 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
 
 ## Tests
 `tests/test_scqo_glue.py` (scqo↔backend glue) and `tests/test_qblox_power.py`
-(readout-power path).
+(the readout AND drive absolute-power paths).
