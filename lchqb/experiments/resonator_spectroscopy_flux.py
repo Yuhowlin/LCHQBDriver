@@ -3,7 +3,7 @@
 cal04 reference pattern: per flux point set a ``VoltageOffset`` on the qubit's own
 flux line and let it settle, then sweep the readout frequency across the detuning
 window around the current ``readout_freq`` via ``Measure(freq=...)``. Unlike
-qubit_spectroscopy_flux there is no return-to-idle before readout — the resonator
+qubit_spectroscopy_flux_pulse there is no return-to-idle before readout — the resonator
 is measured AT the biased flux, the flux-dependent dip IS the signal. Flux safety:
 every subschedule ends with the flux line back at its idle value (``_idle_flux``:
 the calibrated sweet spot when known, else 0 V — shared with the qubit flux probe).
@@ -18,7 +18,7 @@ from typing import Any
 from scqo import register
 from scqo.experiments import ResonatorSpectroscopyFlux
 
-from .qubit_spectroscopy_flux import _idle_flux
+from .qubit_spectroscopy_flux_pulse import _idle_flux
 
 
 @register

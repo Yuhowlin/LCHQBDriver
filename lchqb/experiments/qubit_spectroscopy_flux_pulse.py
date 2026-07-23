@@ -5,12 +5,15 @@ flux line, step the drive clock across the detuning window around the current
 ``drive_freq``, apply a weak CW SATURATION drive (``view.drive_amp`` — the
 ``drive_power_dbm`` residual parked on ``spec.spec_amp``) held through the driven
 dwell, then return the flux to its idle value BEFORE measuring (clean readout at
-the calibrated operating point, matching the QM flux probe). Unlike the old cal07
+the calibrated operating point, matching the QM flux probe). That return-to-idle
+IS the ``_pulse`` name's probe contract: every slice reads out at the same
+idle-flux condition, so the neutral ``estimate()`` reduces the whole map against
+ONE global IQ reference. Unlike the old cal07
 X-pulse version this needs no calibrated pi, so it works during bring-up. Flux
 safety: every subschedule ends with the drive off and the flux line back at 0 V.
 
 Parameters, the transmon-arch fit and the sweet-spot/Ej_sum reporting are
-inherited from ``scqo.experiments.QubitSpectroscopyFlux``. The core ``run()``
+inherited from ``scqo.experiments.QubitSpectroscopyFluxPulse``. The core ``run()``
 parks ``drive_power_dbm`` (a recorded set -> revert) before this probe reads
 ``view.drive_amp``.
 """
@@ -21,7 +24,7 @@ import math
 from typing import Any
 
 from scqo import register
-from scqo.experiments import QubitSpectroscopyFlux
+from scqo.experiments import QubitSpectroscopyFluxPulse
 
 
 def _idle_flux(element: Any) -> float:
@@ -39,7 +42,7 @@ def _idle_flux(element: Any) -> float:
 
 
 @register
-class QbloxQubitSpectroscopyFlux(QubitSpectroscopyFlux):
+class QbloxQubitSpectroscopyFluxPulse(QubitSpectroscopyFluxPulse):
     """Build a multiplexed pulsed flux-spectroscopy Schedule for a Qblox cluster."""
 
     def probe(self) -> Any:
@@ -62,7 +65,7 @@ class QbloxQubitSpectroscopyFlux(QubitSpectroscopyFlux):
         detuning = self.sweep_axes["detuning_hz"]
         reps = self.params.num_averages
 
-        schedule = Schedule("qubit_spectroscopy_flux_multiplexed")
+        schedule = Schedule("qubit_spectroscopy_flux_pulse_multiplexed")
         for qubit_name in self.params.targets:
             view = self.backend.device.component(qubit_name)
             element = view._element  # driver-internal: ports live on the raw element

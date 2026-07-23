@@ -374,15 +374,15 @@ def test_flux_probe_uses_cw_saturation_not_x(backend):
     view.drive_amp (the drive_power_dbm residual on spec_amp) instead of a
     calibrated X pulse; readout still follows the flux return to idle (QM parity).
     Structure only — a full compile needs flux-port wiring the minimal fixture lacks."""
-    from lchqb.experiments.qubit_spectroscopy_flux import QbloxQubitSpectroscopyFlux
+    from lchqb.experiments.qubit_spectroscopy_flux_pulse import QbloxQubitSpectroscopyFluxPulse
 
     view = backend.device.component("q1")
     view.drive_power_dbm = -33.0  # parks spec_amp; the probe reads view.drive_amp
     drive_amp = view.drive_amp
 
-    exp = QbloxQubitSpectroscopyFlux(
+    exp = QbloxQubitSpectroscopyFluxPulse(
         backend,
-        QbloxQubitSpectroscopyFlux.Parameters(
+        QbloxQubitSpectroscopyFluxPulse.Parameters(
             targets=["q1"], num_freq_points=3, num_flux_points=5, num_averages=7,
         ),
     )
