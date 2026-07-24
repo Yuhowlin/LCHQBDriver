@@ -290,6 +290,42 @@ class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
     def drag_beta(self, value: float) -> None:
         raise NotImplementedError(f"{self.name}: {self._DRAG_BETA_UNREALIZED}")
 
+    # The readout discriminator (rotation/threshold/rus) is Unrealized on Qblox
+    # (fieldmap.UNREALIZED): acq_rotation/acq_threshold exist but no scqo
+    # single_shot_readout calibrates them here yet, and Qblox has no RUS. Concrete
+    # raising pairs required (make_view_base declares an abstract property per pushed
+    # field); promote to real acq_rotation/acq_threshold bindings when a Qblox
+    # discriminator experiment lands.
+    _DISCRIMINATOR_UNREALIZED = (
+        "the readout discriminator is Unrealized on the Qblox backend: no "
+        "single_shot_readout wired here yet (acq_rotation/acq_threshold exist; RUS "
+        "has no Qblox counterpart)"
+    )
+
+    @property
+    def readout_rotation_rad(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @readout_rotation_rad.setter
+    def readout_rotation_rad(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @property
+    def readout_threshold(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @readout_threshold.setter
+    def readout_threshold(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @property
+    def readout_rus_threshold(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @readout_rus_threshold.setter
+    def readout_rus_threshold(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
 
 def _read_or_none(view: QbloxReadableTransmon, field: str) -> float | None:
     """Read a neutral field, returning None if this element doesn't carry it.
