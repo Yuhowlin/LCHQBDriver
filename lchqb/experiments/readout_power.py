@@ -39,7 +39,7 @@ class QbloxReadoutPower(ReadoutPower):
 
         schedule = Schedule("readout_power_multiplexed")
         for qubit_name in self.params.targets:
-            view = self.backend.device.component(qubit_name)
+            view = self.device.channel(qubit_name, "readout")
             # the prefactor scales the CURRENT readout amplitude (punchout pattern)
             amp_lo = float(prefactors[0] * view.readout_amp)
             amp_hi = float(prefactors[-1] * view.readout_amp)

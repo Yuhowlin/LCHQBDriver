@@ -4,9 +4,14 @@ The real CLI coverage lives in SCQO/tests (test_cli_*.py) against the built-in
 simulated backend; this smoke test only proves the driver-side glue: the `scqo`
 command runs end-to-end in the qblox venv, the per-repo demo scripts import
 cleanly from scqo.cli, and the `scqo.backends` entry point resolves to a working
-factory (build_backend(cfg, setup); the setup is a NAMED record — backend + note,
-plus the DERIVED "instrument_config" vendor folder injected by scqo since v0.9).
-The v0.4-era scripts/ wrapper layer and the launcher stubs were retired in v0.7.0.
+factory (``build_backend(cfg, setup, roster)`` — the setup is a NAMED record,
+backend + note plus the DERIVED "instrument_config" vendor folder injected by
+scqo, and the roster is the device's authority on which entities exist).
+
+Greenfield: the temp lab writes a schema-3 components.toml (modes + lines; the
+readout rider mints q0_res/q0_ro, the drive rider q0_xy) plus the design.toml the
+simulated vendor seeds its knobs from — without a datasheet no knob has a
+standing value and every run fails pre-probe.
 """
 
 from __future__ import annotations
@@ -21,6 +26,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 FIXTURES = REPO.parents[0] / "SCQO" / "tests" / "demo_instr_config"
 
+#: the whole served surface: one view class + one binding table per CHANNEL KIND
+SERVED_KINDS = {"drive", "readout", "flux"}
+
 
 def _env(tmp_path: Path) -> dict:
     data_root = tmp_path / "data"
@@ -31,19 +39,19 @@ def _env(tmp_path: Path) -> dict:
     )
     # post-cutover a CONFIGURED device REQUIRES a component roster
     (data_root / "simdev" / "components.toml").write_text(
-        'schema = 1\n'
-        '[components.q0]\n'
-        'physical   = "FixedTransmon"\n'
-        'instrument = "ReadableTransmon"\n'
-        'operations = ["rx", "readout"]\n'
-        '[components.q0_res]\n'
-        'physical = "Resonator"\n'
-        '[components.q0_ro]\n'
-        'physical = "ReadoutLine"\n'
-        'members  = { transmon = "q0", resonator = "q0_res" }\n'
-        '[components.q0_xy]\n'
-        'physical = "XYControl"\n'
-        'members  = { transmon = "q0" }\n',
+        "schema = 3\n"
+        '[modes.q0]\n'
+        'kind = "transmon"\n'
+        '[lines.fl]\n'
+        'readout = ["q0"]\n'      # mints q0_res (mode) + q0_ro (channel)
+        '[lines.xy0]\n'
+        'drive = ["q0"]\n',       # mints q0_xy
+        encoding="utf-8",
+    )
+    # ...and a datasheet: the simulated vendor seeds readout_freq_hz from the
+    # resonator's f_r_hz and drive_freq_hz from the qubit's f_01_hz
+    (data_root / "simdev" / "design.toml").write_text(
+        "schema = 1\n[q0]\nf_01_hz = 3.8e9\n[q0_res]\nf_r_hz = 5.95e9\n",
         encoding="utf-8",
     )
     config = tmp_path / "config.toml"
@@ -72,30 +80,38 @@ def test_ai_loop_demo_runs(tmp_path):
 
 
 def test_field_catalog_matches_implementation():
-    """The declared field catalog cannot drift: per category, bindings plus the
-    declared Unrealized entries cover EXACTLY scqo's pushed fields (a new core
-    field fails here until this driver binds or declines it — the combo-release
-    alarm), coupled names are real sibling fields, the vendor-only inventory
-    collides with no declared neutral field, and the module is pure data
-    (importable without qblox_scheduler — enforced on its import statements)."""
+    """The declared field catalog cannot drift: per CHANNEL KIND, bindings plus the
+    declared Unrealized entries cover EXACTLY scqo's KNOB fields of that kind (a new
+    core knob fails here until this driver binds or declines it — the combo-release
+    alarm; monitors and facts are never pushed and must appear in neither), coupled
+    names are real sibling knobs, the vendor-only inventory collides with no neutral
+    field name, and the module is pure data (importable without qblox_scheduler —
+    enforced on its import statements)."""
     import ast
 
-    from scqo.categories import field_categories, pushed_fields
+    from scqo.catalog import ALL_STATIC_FIELDS, CHANNELS
 
     from lchqb.backend import fieldmap
 
-    pushed = set(pushed_fields("ReadableTransmon"))
-    bindings = fieldmap.FIELD_BINDINGS["ReadableTransmon"]
-    unrealized = fieldmap.UNREALIZED.get("ReadableTransmon", {})
-    assert set(bindings) | set(unrealized) == pushed
-    assert not set(bindings) & set(unrealized)  # realized XOR unrealized, never both
-    for name, binding in bindings.items():
-        assert binding.path, f"{name}: empty vendor path"
-        assert set(binding.coupled) <= pushed - {name}, name
-    for name, entry in unrealized.items():
-        assert entry.category == "ReadableTransmon" and entry.field == name, name
-        assert entry.reason, name
-    assert not set(fieldmap.VENDOR_ONLY) & set(field_categories())
+    assert set(fieldmap.FIELD_BINDINGS) == SERVED_KINDS
+    assert set(fieldmap.UNREALIZED) <= SERVED_KINDS
+    for kind in SERVED_KINDS:
+        knobs = {f for f, spec in CHANNELS[kind].fields.items()
+                 if spec.role == "knob"}
+        bindings = fieldmap.FIELD_BINDINGS[kind]
+        unrealized = fieldmap.UNREALIZED.get(kind, {})
+        assert set(bindings) | set(unrealized) == knobs, kind
+        assert not set(bindings) & set(unrealized)  # realized XOR unrealized
+        for name, binding in bindings.items():
+            assert binding.path, f"{kind}.{name}: empty vendor path"
+            assert set(binding.coupled) <= knobs - {name}, name
+        for name, entry in unrealized.items():
+            # the scqo dataclass attribute is still spelled 'category'; since
+            # the greenfield model it carries the channel KIND
+            assert entry.category == kind and entry.field == name, name
+            assert entry.reason, name
+
+    assert not set(fieldmap.VENDOR_ONLY) & ALL_STATIC_FIELDS
     assert all(v.path and v.doc for v in fieldmap.VENDOR_ONLY.values())
 
     # every entry carries a valid placement-rule kind; unique entries must state
@@ -117,15 +133,17 @@ def test_field_catalog_matches_implementation():
     }
     assert imported <= {"__future__", "scqo.fieldmap"}, imported
 
-    # the backend class serves exactly the declared catalog (methods are pure)
-    from lchqb.backend.qblox_backend import QbloxBackend
+    # the backend class serves exactly the declared catalog (methods are pure),
+    # and it serves a view class for exactly the kinds the catalog declares
+    from lchqb.backend.qblox_backend import _CHANNEL_VIEWS, QbloxBackend
 
     assert QbloxBackend.field_bindings(None) == fieldmap.FIELD_BINDINGS
     assert QbloxBackend.unrealized(None) == fieldmap.UNREALIZED
     assert QbloxBackend.vendor_only(None) == fieldmap.VENDOR_ONLY
+    assert set(_CHANNEL_VIEWS) == SERVED_KINDS
 
 
-def test_backend_entry_point_resolves(tmp_path):
+def test_backend_entry_point_resolves(tmp_path, roster):
     """The scqo.backends entry point loads and the factory fails loudly (no
     hardware needed) when the setup's folder lacks the canonical vendor files."""
     from importlib.metadata import entry_points
@@ -140,9 +158,41 @@ def test_backend_entry_point_resolves(tmp_path):
     empty.mkdir()
     setup = {"backend": "qblox", "instrument_config": str(empty)}
     with pytest.raises(SystemExit, match="dut_config.json"):
-        factory(None, setup)
+        factory(None, setup, roster)
     with pytest.raises(SystemExit, match="qblox"):
-        factory(None, {"backend": "qm"})  # wrong family refused
+        factory(None, {"backend": "qm"}, roster)  # wrong family refused
+
+
+def test_components_inventory_is_a_truthful_witness(tmp_path, roster):
+    """``components()`` is the doctor's WITNESS: exactly the channel entities this
+    backend serves a view for, each reported with the ROSTER's kind (a kind
+    disagreement is a FAIL in scqo.checks.vendor_checks) and its derived
+    operation. The pair composite is absent — Qblox exposes no gate-macro
+    surface — which the doctor reports as an ordinary WARN, never a failure."""
+    import pytest
+
+    pytest.importorskip("qblox_scheduler")
+    from conftest import make_backend
+    from scqo.checks import FAIL, vendor_checks
+
+    backend = make_backend(tmp_path, roster)
+    inventory = backend.device.components()
+
+    # every roster channel targets an element of the fixture dut, so all of them
+    # are realized; the composite is not
+    assert set(inventory) == set(roster.channels())
+    for name, info in inventory.items():
+        entity = roster.entities[name]
+        assert info.kind == entity.kind
+        assert info.target == entity.target and info.line == entity.line
+    assert inventory["q1_ro"].operations == ("readout",)
+    assert inventory["q1_xy"].operations == ("rx",)
+    assert inventory["c12_z"].operations == ("flux_bias",)
+
+    checks = vendor_checks(roster, inventory)
+    assert not [c for c in checks if c.status == FAIL], checks
+    missing = [c for c in checks if "does not realize" in c.message]
+    assert len(missing) == 1 and "q1_q2" in missing[0].message  # the composite only
 
 
 def test_real_fixture_dut_config_parses(tmp_path):

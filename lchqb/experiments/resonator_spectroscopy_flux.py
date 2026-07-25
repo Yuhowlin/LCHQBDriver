@@ -2,11 +2,12 @@
 
 cal04 reference pattern: per flux point set a ``VoltageOffset`` on the qubit's own
 flux line and let it settle, then sweep the readout frequency across the detuning
-window around the current ``readout_freq`` via ``Measure(freq=...)``. Unlike
+window around the current ``readout_freq_hz`` via ``Measure(freq=...)``. Unlike
 qubit_spectroscopy_flux_pulse there is no return-to-idle before readout — the resonator
 is measured AT the biased flux, the flux-dependent dip IS the signal. Flux safety:
-every subschedule ends with the flux line back at its idle value (``_idle_flux``:
-the calibrated sweet spot when known, else 0 V — shared with the qubit flux probe).
+every subschedule ends with the flux line back at its idle value
+(``_vendor.idle_flux``: the calibrated sweet spot when known, else 0 V — shared
+with the qubit flux probe).
 Parameters, the dispersive-model fit and the sweet-spot/f_r0/g reporting are
 inherited from ``scqo.experiments.ResonatorSpectroscopyFlux``.
 """
@@ -18,7 +19,7 @@ from typing import Any
 from scqo import register
 from scqo.experiments import ResonatorSpectroscopyFlux
 
-from .qubit_spectroscopy_flux_pulse import _idle_flux
+from ._vendor import idle_flux as _idle_flux, vendor_element
 
 
 @register
@@ -41,10 +42,12 @@ class QbloxResonatorSpectroscopyFlux(ResonatorSpectroscopyFlux):
 
         schedule = Schedule("resonator_spectroscopy_flux_multiplexed")
         for qubit_name in self.params.targets:
-            view = self.backend.device.component(qubit_name)
-            element = view._element  # driver-internal: ports live on the raw element
+            # the flux port is vendor-only; reaching it through the FLUX channel
+            # means a target with no flux wiring refuses here, not mid-schedule
+            element = vendor_element(self, qubit_name, "flux")
             flux_port = element.ports.flux
-            center = view.readout_freq  # detuning is relative to the CURRENT readout_freq
+            # detuning is relative to the CURRENT readout_freq_hz (on q<n>_ro)
+            center = self.device.channel(qubit_name, "readout").readout_freq_hz
             idle_flux = _idle_flux(element)
             sub = Schedule(f"res_spec_flux_{qubit_name}")
             # flux OUTER, detuning INNER: flat bin order then matches the canonical

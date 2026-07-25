@@ -3,9 +3,15 @@
 ``qblox_scheduler`` is imported lazily (inside methods) so that ``import lchqb`` works
 without the Qblox stack installed, and so the simulated path never needs it.
 
+Since the greenfield model a driver serves a view PER CHANNEL ENTITY, not per
+qubit: the roster's ``q1_xy`` / ``q1_ro`` / ``q1_z`` each carry their own
+function's knobs, and all three resolve onto the SAME qblox_scheduler
+``DeviceElement`` (the channel's single target). ``QbloxDeviceModel.component``
+does that resolution through the roster — never by parsing names.
+
 Neutral-name mapping: declared ONCE in ``lchqb/backend/fieldmap.py`` (the catalog
-``scqo state --fields`` renders; drift-tested per category against scqo's pushed
-fields). The executable conversions are ``QbloxReadableTransmon``'s properties below.
+``scqo state --fields`` renders; drift-tested per channel kind against scqo's knob
+fields). The executable conversions are the three channel views below.
 """
 
 from __future__ import annotations
@@ -17,13 +23,16 @@ from typing import TYPE_CHECKING, Any
 
 import xarray as xr
 from scqo.backend import Backend
-from scqo.device import ComponentInfo, DeviceModel, make_view_base
+from scqo.catalog import derived_op
+from scqo.device import ComponentInfo, DeviceModel, EntityView, make_view_base
+from scqo.entities import Channel
 from scqo.fieldmap import Unrealized, VendorBinding, VendorOnly
 
 from lchqb.backend.fieldmap import FIELD_BINDINGS, UNREALIZED, VENDOR_ONLY
 
 if TYPE_CHECKING:
     from scqo.experiment import Experiment
+    from scqo.roster import Roster
 
 #: Nominal QRM-RF full-scale output (dBm) at pulse_amp=1.0, output_att=0 — the
 #: datasheet maximum (+5 dBm into 50 Ohm). Frequency/LO/mixer-dependent in reality,
@@ -89,45 +98,71 @@ def _grid_s(value: float, what: str) -> float:
     return grid / 1e9
 
 
-class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
-    """The scqo ReadableTransmon view backed by a qblox_scheduler ``DeviceElement``.
+class _QbloxChannelView:
+    """Shared plumbing of the three channel views.
 
-    ``hw_agent`` (the backend's HardwareAgent) is needed only by
-    ``readout_power_dbm``: the readout attenuation lives in the hardware
-    compilation config, one level above the element. Its
-    ``hardware_configuration`` dict is the AUTHORITATIVE runtime surface — every
-    ``run()`` recompiles from it and re-pushes ``out<n>_att`` to the module, so
-    writes there survive; a direct qcodes ``.set()`` would be overwritten.
+    ``name`` is the ROSTER ENTITY name (``q1_ro``) — what scqo addresses and what
+    every error message must cite; the VENDOR element name (``q1``) is
+    ``_element.name`` and is what the port-clock keys are built from. The two were
+    the same string in the pre-greenfield model, which is why the split matters.
+
+    ``hw_agent`` (the backend's HardwareAgent) is needed only by the absolute-power
+    knobs: an output attenuation lives in the hardware compilation config, one level
+    above the element. Its ``hardware_configuration`` dict is the AUTHORITATIVE
+    runtime surface — every ``run()`` recompiles from it and re-pushes
+    ``out<n>_att`` to the module, so writes there survive; a direct qcodes ``.set()``
+    would be overwritten.
     """
 
-    def __init__(self, element: Any, hw_agent: Any = None) -> None:
-        self.name = element.name
+    def __init__(self, name: str, element: Any, hw_agent: Any = None) -> None:
+        self.name = name
         self._element = element
         self._hw_agent = hw_agent
 
     @property
-    def readout_freq(self) -> float:
+    def _qubit(self) -> str:
+        """The vendor element name behind this channel (the port-clock key half)."""
+        return self._element.name
+
+    def _output_att(self, port_clock: str) -> int:
+        """Current output attenuation (dB) of a line from the hardware config
+        (missing key -> 0 dB, the instrument default)."""
+        if self._hw_agent is None:
+            raise RuntimeError(
+                f"{self.name}: no HardwareAgent attached — output_att (and so the "
+                f"absolute powers) needs the hardware compilation config"
+            )
+        opts = self._hw_agent.hardware_configuration.hardware_options
+        att_map = getattr(opts, "output_att", None) or {}
+        return int(att_map.get(port_clock, 0))
+
+    def _write_output_att(self, port_clock: str, att: int) -> None:
+        if self._hw_agent is None:
+            raise RuntimeError(
+                f"{self.name}: no HardwareAgent attached — cannot write output_att"
+            )
+        opts = self._hw_agent.hardware_configuration.hardware_options
+        if opts.output_att is None:
+            opts.output_att = {}
+        opts.output_att[port_clock] = att  # authoritative: recompiled+pushed each run
+
+
+class QbloxReadoutChannel(_QbloxChannelView, make_view_base("readout")):
+    """The scqo READOUT channel view (``q1_ro``) over the target's ``DeviceElement``.
+
+    Carries the dispersive-readout knobs: tone frequency, pulse amplitude/power,
+    and the pulse/window pair. The discriminator knobs are Unrealized here
+    (fieldmap.UNREALIZED); the monitors (fidelity_g/e, blob positions) are never
+    pushed and so have no vendor surface at all.
+    """
+
+    @property
+    def readout_freq_hz(self) -> float:
         return _read(self._element.clock_freqs, "readout")
 
-    @readout_freq.setter
-    def readout_freq(self, value: float) -> None:
+    @readout_freq_hz.setter
+    def readout_freq_hz(self, value: float) -> None:
         _write(self._element.clock_freqs, "readout", value)
-
-    @property
-    def drive_freq(self) -> float:
-        return _read(self._element.clock_freqs, "f01")
-
-    @drive_freq.setter
-    def drive_freq(self, value: float) -> None:
-        _write(self._element.clock_freqs, "f01", value)
-
-    @property
-    def pi_amp(self) -> float:
-        return _read(self._element.rxy, "amp180")
-
-    @pi_amp.setter
-    def pi_amp(self, value: float) -> None:
-        _write(self._element.rxy, "amp180", value)
 
     @property
     def readout_amp(self) -> float:
@@ -174,35 +209,7 @@ class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
         """The hardware-options key of this element's readout line, e.g. 'q1:res-q1.ro'."""
         port = getattr(self._element.ports, "readout")
         port = port() if callable(port) else port
-        return f"{port}-{self.name}.ro"
-
-    def _drive_port_clock(self) -> str:
-        """The hardware-options key of this element's drive line, e.g. 'q1:mw-q1.01'."""
-        port = getattr(self._element.ports, "microwave")
-        port = port() if callable(port) else port
-        return f"{port}-{self.name}.01"
-
-    def _output_att(self, port_clock: str | None = None) -> int:
-        """Current output attenuation (dB) of a line from the hardware config
-        (default: the readout line; missing key -> 0 dB, the instrument default)."""
-        if self._hw_agent is None:
-            raise RuntimeError(
-                f"{self.name}: no HardwareAgent attached — output_att (and so the "
-                f"absolute powers) needs the hardware compilation config"
-            )
-        opts = self._hw_agent.hardware_configuration.hardware_options
-        att_map = getattr(opts, "output_att", None) or {}
-        return int(att_map.get(port_clock or self._port_clock(), 0))
-
-    def _write_output_att(self, port_clock: str, att: int) -> None:
-        if self._hw_agent is None:
-            raise RuntimeError(
-                f"{self.name}: no HardwareAgent attached — cannot write output_att"
-            )
-        opts = self._hw_agent.hardware_configuration.hardware_options
-        if opts.output_att is None:
-            opts.output_att = {}
-        opts.output_att[port_clock] = att  # authoritative: recompiled+pushed each run
+        return f"{port}-{self._qubit}.ro"
 
     @property
     def readout_power_dbm(self) -> float:
@@ -211,7 +218,8 @@ class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
             raise ValueError(
                 f"{self.name}: readout pulse_amp is {amp} — absolute power undefined"
             )
-        return QBLOX_NOMINAL_FULL_SCALE_DBM - self._output_att() + 20.0 * math.log10(amp)
+        return (QBLOX_NOMINAL_FULL_SCALE_DBM - self._output_att(self._port_clock())
+                + 20.0 * math.log10(amp))
 
     @readout_power_dbm.setter
     def readout_power_dbm(self, value: float) -> None:
@@ -219,12 +227,92 @@ class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
         self._write_output_att(self._port_clock(), att)
         _write(self._element.measure, "pulse_amp", amp)
 
+    # ------------------------------------------------------- unrealized knobs
+    # The readout discriminator (rotation/threshold/rus) is Unrealized on Qblox
+    # (fieldmap.UNREALIZED): acq_rotation/acq_threshold exist but no scqo
+    # single_shot_readout calibrates them here yet, and Qblox has no RUS. Concrete
+    # raising pairs required (make_view_base declares an abstract property per knob
+    # of the kind); promote to real acq_rotation/acq_threshold bindings when a
+    # Qblox discriminator experiment lands.
+    _DISCRIMINATOR_UNREALIZED = (
+        "the readout discriminator is Unrealized on the Qblox backend: no "
+        "single_shot_readout wired here yet (acq_rotation/acq_threshold exist; RUS "
+        "has no Qblox counterpart)"
+    )
+
+    @property
+    def readout_rotation_rad(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @readout_rotation_rad.setter
+    def readout_rotation_rad(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @property
+    def readout_threshold(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @readout_threshold.setter
+    def readout_threshold(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @property
+    def readout_rus_threshold(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+    @readout_rus_threshold.setter
+    def readout_rus_threshold(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+
+
+class QbloxDriveChannel(_QbloxChannelView, make_view_base("drive")):
+    """The scqo DRIVE channel view (``q1_xy``) over the target's ``DeviceElement``.
+
+    Carries the xy knobs: drive frequency, the calibrated pi pulse (amplitude and
+    length), and the saturation-drive pair behind the absolute drive power.
+    """
+
+    @property
+    def drive_freq_hz(self) -> float:
+        return _read(self._element.clock_freqs, "f01")
+
+    @drive_freq_hz.setter
+    def drive_freq_hz(self, value: float) -> None:
+        _write(self._element.clock_freqs, "f01", value)
+
+    @property
+    def pi_amp(self) -> float:
+        return _read(self._element.rxy, "amp180")
+
+    @pi_amp.setter
+    def pi_amp(self, value: float) -> None:
+        _write(self._element.rxy, "amp180", value)
+
+    @property
+    def pi_duration_s(self) -> float:
+        return _read(self._element.rxy, "duration")
+
+    @pi_duration_s.setter
+    def pi_duration_s(self, value: float) -> None:
+        # No 4 ns grid guard: the portable pulse/weights grid is the READOUT
+        # pulse/window contract (QM's integration weights); an x180 length is a
+        # plain seconds value on both backends, and refusing off-grid ones here
+        # would invent a contract the neutral catalog does not state.
+        _write(self._element.rxy, "duration", value)
+
+    # ------------------------------------------------------------ absolute power
     # The drive twin, anchored to the stored SATURATION (spec) amplitude
     # (element.spec.spec_amp — the CW VoltageOffset the qubit_spectroscopy probe
     # plays). The drive output_att is PORT-level and shared by every xy pulse:
     # while it is off its standing value the stored pi_amp means a different
     # power (qubit_spectroscopy's run() sets and exactly reverts it; the even
     # discrete att + verbatim amplitude restore make the revert lossless).
+    def _drive_port_clock(self) -> str:
+        """The hardware-options key of this element's drive line, e.g. 'q1:mw-q1.01'."""
+        port = getattr(self._element.ports, "microwave")
+        port = port() if callable(port) else port
+        return f"{port}-{self._qubit}.01"
+
     @property
     def drive_amp(self) -> float:
         amp = _read(self._element.spec, "spec_amp")
@@ -257,26 +345,10 @@ class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
         self._write_output_att(self._drive_port_clock(), att)
         _write(self._element.spec, "spec_amp", amp)
 
-    # ------------------------------------------------------- unrealized fields
-    # idle_flux_v is declared Unrealized in lchqb.backend.fieldmap.UNREALIZED —
-    # make_view_base declares the abstract pair (the category schema), so a
-    # concrete raising implementation is required for the class to instantiate.
-    _IDLE_FLUX_V_UNREALIZED = (
-        "idle_flux_v is Unrealized on the Qblox backend: no flux-tunable device "
-        "yet; the setter lands with the first flux chip"
-    )
-
-    @property
-    def idle_flux_v(self) -> float:
-        raise NotImplementedError(f"{self.name}: {self._IDLE_FLUX_V_UNREALIZED}")
-
-    @idle_flux_v.setter
-    def idle_flux_v(self, value: float) -> None:
-        raise NotImplementedError(f"{self.name}: {self._IDLE_FLUX_V_UNREALIZED}")
-
+    # ------------------------------------------------------- unrealized knobs
     # drag_beta is Unrealized on Qblox (fieldmap.UNREALIZED): rxy.beta exists but
     # no scqo experiment calibrates it here yet. Concrete raising pair required
-    # because make_view_base declares the abstract property for every pushed field.
+    # because make_view_base declares the abstract property for every knob.
     _DRAG_BETA_UNREALIZED = (
         "drag_beta is Unrealized on the Qblox backend: no DRAG calibration wired "
         "here yet (the drag experiments are QM-only)"
@@ -290,80 +362,153 @@ class QbloxReadableTransmon(make_view_base("ReadableTransmon")):
     def drag_beta(self, value: float) -> None:
         raise NotImplementedError(f"{self.name}: {self._DRAG_BETA_UNREALIZED}")
 
-    # The readout discriminator (rotation/threshold/rus) is Unrealized on Qblox
-    # (fieldmap.UNREALIZED): acq_rotation/acq_threshold exist but no scqo
-    # single_shot_readout calibrates them here yet, and Qblox has no RUS. Concrete
-    # raising pairs required (make_view_base declares an abstract property per pushed
-    # field); promote to real acq_rotation/acq_threshold bindings when a Qblox
-    # discriminator experiment lands.
-    _DISCRIMINATOR_UNREALIZED = (
-        "the readout discriminator is Unrealized on the Qblox backend: no "
-        "single_shot_readout wired here yet (acq_rotation/acq_threshold exist; RUS "
-        "has no Qblox counterpart)"
+
+class QbloxFluxChannel(_QbloxChannelView, make_view_base("flux")):
+    """The scqo FLUX channel view (``q1_z``) over the target's ``DeviceElement``.
+
+    The flux LINE is realized — the probes play ``VoltageOffset`` on
+    ``element.ports.flux`` — but the STANDING bias knob is not: nothing in the
+    Qblox element or hardware config holds a DC set-point (see
+    fieldmap.UNREALIZED). The transfer-function FACTS (flux_offset,
+    flux_per_phi0) are physical.json content and never push, so this view carries
+    exactly one raising knob pair.
+    """
+
+    _IDLE_FLUX_UNREALIZED = (
+        "idle_flux is Unrealized on the Qblox backend: the flux port is driven "
+        "per-schedule (VoltageOffset) and no standing DC source is wired into the "
+        "hardware config; the setter lands with the first flux chip"
     )
 
     @property
-    def readout_rotation_rad(self) -> float:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+    def idle_flux(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._IDLE_FLUX_UNREALIZED}")
 
-    @readout_rotation_rad.setter
-    def readout_rotation_rad(self, value: float) -> None:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
-
-    @property
-    def readout_threshold(self) -> float:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
-
-    @readout_threshold.setter
-    def readout_threshold(self, value: float) -> None:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
-
-    @property
-    def readout_rus_threshold(self) -> float:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
-
-    @readout_rus_threshold.setter
-    def readout_rus_threshold(self, value: float) -> None:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+    @idle_flux.setter
+    def idle_flux(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._IDLE_FLUX_UNREALIZED}")
 
 
-def _read_or_none(view: QbloxReadableTransmon, field: str) -> float | None:
-    """Read a neutral field, returning None if this element doesn't carry it.
+#: channel kind -> the view class this backend serves for it. A kind absent here
+#: (``pump``) and every non-channel entity (modes, lines, composites) is a KeyError
+#: from ``component()`` — the contract scqo degrades gracefully against.
+_CHANNEL_VIEWS: dict[str, type[_QbloxChannelView]] = {
+    "drive": QbloxDriveChannel,
+    "readout": QbloxReadoutChannel,
+    "flux": QbloxFluxChannel,
+}
+
+
+def _read_or_none(view: EntityView, field: str) -> float | None:
+    """Read a neutral knob, returning None if this element doesn't carry it.
 
     ValueError covers readout_power_dbm on a zero/unset pulse_amp; RuntimeError
     covers a device model constructed without a HardwareAgent (no hardware config
-    to read the attenuation from)."""
+    to read the attenuation from) — and NotImplementedError, the Unrealized
+    knobs' signal, is a RuntimeError subclass."""
     try:
         return getattr(view, field)
     except (TypeError, AttributeError, KeyError, ValueError, RuntimeError):
         return None
 
 
+def _derived_operations(roster: "Roster", channel: Channel) -> tuple[str, ...]:
+    """The single-mode operation this channel derives on its target — read from
+    scqo's (channel kind x target kind) table, never declared here."""
+    target = roster.entities.get(channel.target[0])
+    if target is None:
+        return ()
+    try:
+        op = derived_op(channel.kind, target.kind)
+    except KeyError:
+        return ()
+    return (op,) if op else ()
+
+
 class QbloxDeviceModel(DeviceModel):
     """Wraps a qblox_scheduler ``QuantumDevice`` (+ optionally its HardwareAgent).
 
+    Entity names are ROSTER names: ``component("q1_ro")`` resolves the channel
+    entity through the roster, takes its KIND and its single TARGET, fetches the
+    vendor element for that target, and returns the matching channel view. The
+    roster is therefore not optional — without it the driver cannot tell what
+    ``q1_ro`` means.
+
     The agent reference (and its hardware config file path) enables the
-    ``readout_power_dbm`` surface — the readout attenuation lives in the hardware
-    compilation config, not on the element. Constructing without an agent keeps
-    the legacy (element-only) behavior working.
+    ``*_power_dbm`` surfaces — an output attenuation lives in the hardware
+    compilation config, not on the element.
     """
 
-    def __init__(self, quantum_device: Any, config_file: str | None = None,
+    def __init__(self, quantum_device: Any, roster: "Roster",
+                 config_file: str | None = None,
                  hw_agent: Any = None, hw_config_file: str | None = None) -> None:
         self._qd = quantum_device
+        self._roster = roster
         self._config_file = config_file
         self._hw_agent = hw_agent
         self._hw_config_file = hw_config_file
 
-    def component(self, name: str) -> QbloxReadableTransmon:
-        return QbloxReadableTransmon(self._qd.get_element(name), hw_agent=self._hw_agent)
+    @property
+    def roster(self) -> "Roster":
+        """The device's authority on which entities exist (read-only)."""
+        return self._roster
+
+    def component(self, name: str) -> EntityView:
+        """The view for one vendor-realized entity, addressed by ROSTER name.
+
+        KeyError for everything this backend does not realize — an unknown name,
+        a mode/line/composite (Qblox exposes no gate-macro surface), a pump or
+        multi-target channel, and a channel whose target has no element in the
+        dut config. That is the contract: scqo degrades gracefully and the doctor
+        reports the gap against ``components()``.
+        """
+        e = self._roster.entities.get(name)
+        if e is None:
+            raise KeyError(
+                f"unknown entity {name!r} — not in this device's roster")
+        if not isinstance(e, Channel):
+            channels = [c.name for c in self._roster.channels_of(name)]
+            raise KeyError(
+                f"{name!r} is a {type(e).__name__.lower()}; the Qblox backend "
+                f"serves channel entities only (knobs live on channels) — "
+                f"address {channels or '(none wired)'}")
+        view_cls = _CHANNEL_VIEWS.get(e.kind)
+        if view_cls is None:
+            raise KeyError(
+                f"{name!r} is a {e.kind} channel — the Qblox backend realizes "
+                f"{sorted(_CHANNEL_VIEWS)} channels only")
+        if len(e.target) != 1:
+            raise KeyError(
+                f"{name!r} is a multi-target {e.kind} channel {e.target} — the "
+                f"Qblox backend serves one element per channel")
+        try:
+            element = self._qd.get_element(e.target[0])
+        except KeyError:
+            raise KeyError(
+                f"{name!r} targets {e.target[0]!r}, which is not an element of "
+                f"the loaded dut config (elements: {sorted(self._qd.elements)})"
+            ) from None
+        return view_cls(name, element, hw_agent=self._hw_agent)
 
     def components(self) -> dict[str, ComponentInfo]:
-        # Derived inventory (the doctor's WITNESS, never truth): element_type
-        # cannot distinguish couplers, the roster arbitrates. Edges exist in the
-        # dut config but pairs are Phase 2 — ignored here.
-        return {name: ComponentInfo("ReadableTransmon", operations=("rx", "readout"))
-                for name in self._qd.elements}
+        """Derived inventory (the doctor's WITNESS, never truth): every roster
+        channel this backend actually serves a view for, with the kind it serves
+        it AS — ``vendor_checks`` FAILS on a kind disagreement, so this reports
+        the channel's kind, not an element type (element_type cannot distinguish
+        a coupler from a qubit; the roster arbitrates). Composites are absent:
+        no Qblox gate-macro surface exists yet.
+        """
+        elements = set(self._qd.elements)
+        out: dict[str, ComponentInfo] = {}
+        for name, ch in self._roster.channels().items():
+            if ch.kind not in _CHANNEL_VIEWS or len(ch.target) != 1:
+                continue
+            if ch.target[0] not in elements:
+                continue
+            out[name] = ComponentInfo(
+                kind=ch.kind, target=tuple(ch.target), line=ch.line,
+                operations=_derived_operations(self._roster, ch))
+        return out
 
     def save(self) -> None:
         # Write back to the EXACT files the device was loaded from. (to_json_file
@@ -402,17 +547,20 @@ class QbloxDeviceModel(DeviceModel):
                                                        encoding="utf-8")
 
     def snapshot(self) -> dict:
-        # Tolerate non-transmon elements (couplers etc.): report None for a field the
-        # element doesn't carry rather than crashing on a real lab device tree.
+        """``{entity: {knob: value}}`` over the channel entities this backend
+        realizes, reporting only the knobs the fieldmap declares BOUND (the
+        Unrealized ones have no vendor value to seed from). None for a knob a
+        given element cannot answer — a real lab device tree carries elements
+        without a spec slot, and provenance must never crash a session."""
         state: dict[str, dict] = {}
-        for name in self._qd.elements:
-            view = self.component(name)
+        for name, ch in self._roster.channels().items():
+            try:
+                view = self.component(name)
+            except KeyError:
+                continue  # not realized here: absent from the snapshot entirely
             state[name] = {
                 field: _read_or_none(view, field)
-                for field in ("readout_freq", "drive_freq", "pi_amp",
-                              "drive_amp", "drive_power_dbm", "readout_amp",
-                              "readout_power_dbm", "readout_duration_s",
-                              "readout_integration_s")
+                for field in FIELD_BINDINGS.get(ch.kind, {})
             }
         return state
 
@@ -420,13 +568,15 @@ class QbloxDeviceModel(DeviceModel):
 class QbloxBackend(Backend):
     """scqo Backend over a Qblox cluster (or dummy connections for dry runs)."""
 
-    def __init__(self, hardware_config: str, device_config: str, output_dir: str | None = None) -> None:
+    def __init__(self, hardware_config: str, device_config: str,
+                 output_dir: str | None = None, *, roster: "Roster") -> None:
         # Lazy import keeps `import lchqb` free of qblox_scheduler. The elements import
         # registers the lab's custom element types (FluxTunableTransmonElement) so the
         # dut config can be deserialized.
         import lchqb.elements  # noqa: F401
         from qblox_scheduler import HardwareAgent
 
+        self._roster = roster
         self._hw_agent = HardwareAgent(
             hardware_configuration=hardware_config,
             quantum_device_configuration=device_config,
@@ -455,45 +605,68 @@ class QbloxBackend(Backend):
         )
         self._device = QbloxDeviceModel(
             self._hw_agent.quantum_device,
+            roster,
             config_file=device_config,
             hw_agent=self._hw_agent,
             hw_config_file=hardware_config,
         )
 
     @classmethod
-    def load(cls, config_dir: str = "./qblox_state", output_dir: str | None = None) -> "QbloxBackend":
+    def load(cls, config_dir: str = "./qblox_state", output_dir: str | None = None,
+             *, roster: "Roster") -> "QbloxBackend":
         """Construct from the repo's standard config locations."""
         return cls(
             hardware_config=f"{config_dir}/hw_config.json",
             device_config=f"{config_dir}/dut_config.json",
             output_dir=output_dir,
+            roster=roster,
         )
 
     @property
     def device(self) -> QbloxDeviceModel:
         return self._device
 
+    @property
+    def roster(self) -> "Roster":
+        """The device roster this backend was built against."""
+        return self._roster
+
     def field_bindings(self) -> dict[str, dict[str, VendorBinding]]:
-        """The declared per-category neutral-field catalog (lchqb.backend.fieldmap)
-        — the conversion CODE is QbloxReadableTransmon above; this is its description."""
-        return {category: dict(bindings) for category, bindings in FIELD_BINDINGS.items()}
+        """The declared per-CHANNEL-KIND neutral-knob catalog (lchqb.backend.fieldmap)
+        — the conversion CODE is the channel views above; this is its description."""
+        return {kind: dict(bindings) for kind, bindings in FIELD_BINDINGS.items()}
 
     def unrealized(self) -> dict[str, dict[str, Unrealized]]:
-        """Pushed fields this backend cannot realize, per category (see fieldmap)."""
-        return {category: dict(entries) for category, entries in UNREALIZED.items()}
+        """Knobs this backend cannot realize, per channel kind (see fieldmap)."""
+        return {kind: dict(entries) for kind, entries in UNREALIZED.items()}
 
     def vendor_only(self) -> dict[str, VendorOnly]:
         """Qblox-unique calibration knobs, vendor-owned (see fieldmap)."""
         return dict(VENDOR_ONLY)
 
+    def _default_view(self, target: str, kind: str) -> EntityView | None:
+        """The target's DEFAULT channel view of one kind, or None when the roster
+        or the vendor tree cannot serve it (provenance must never fail a run)."""
+        try:
+            return self._device.component(
+                self._roster.default_channel(target, kind))
+        except Exception:
+            return None
+
     def power_context(self, qubits: list[str]) -> dict:
-        """Raw readout + drive chain values per qubit (run-record provenance only)."""
+        """Raw readout + drive chain values per qubit (run-record provenance only).
+
+        Addressed by MODE name (``params.targets``): each target's default readout
+        and drive channels are resolved through the roster, so the two blocks stay
+        independent — an element without a spec slot still reports its readout chain.
+        """
         out: dict = {}
         for name in qubits:
+            out[name] = {}
+            view = self._default_view(name, "readout")
             try:
-                view = self._device.component(name)
                 out[name] = {
-                    "output_att_db": view._output_att(),
+                    "output_att_db": view._output_att(view._port_clock()),
                     "pulse_amp": _read(view._element.measure, "pulse_amp"),
                     "nominal_full_scale_dbm": QBLOX_NOMINAL_FULL_SCALE_DBM,
                     "readout_power_dbm": view.readout_power_dbm,
@@ -501,7 +674,7 @@ class QbloxBackend(Backend):
                             "(frequency-dependent, ±a few dB)",
                 }
                 # The readout LO the data was taken at: a hand-edited lo_freq is
-                # otherwise invisible in provenance (readout_freq alone cannot
+                # otherwise invisible in provenance (readout_freq_hz alone cannot
                 # explain a jump across the IF window). Only when configured — a
                 # missing entry must not degrade the rest of the context.
                 opts = self._hw_agent.hardware_configuration.hardware_options
@@ -512,10 +685,9 @@ class QbloxBackend(Backend):
             except Exception:  # provenance must never fail a run
                 out[name] = {}
             # The drive chain behind drive_power_dbm — same never-fail rule, and
-            # independent of the readout block (an element without a spec slot
-            # still reports its readout chain).
+            # independent of the readout block.
             try:
-                view = self._device.component(name)
+                view = self._default_view(name, "drive")
                 out[name].update({
                     "drive_output_att_db": view._output_att(view._drive_port_clock()),
                     "spec_amp": _read(view._element.spec, "spec_amp"),

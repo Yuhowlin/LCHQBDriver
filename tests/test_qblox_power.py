@@ -1,5 +1,10 @@
-"""readout_power_dbm on the Qblox backend (v0.8): the output-att solve, the
+"""The absolute-power surfaces on the Qblox backend: the output-att solves, the
 authoritative hardware-config write surface, the dual-file save, and power_context.
+
+Greenfield: the two chains live on DIFFERENT entities — ``q1_ro`` (readout) and
+``q1_xy`` (drive) are separate channel views over the SAME vendor element, and
+``power_context`` still takes MODE names (``params.targets``) and resolves both
+default channels through the roster.
 
 Offline: a real dut fixture (SCQO/tests/demo_instr_config) + a minimal hw config —
 HardwareAgent validates the config at construction, no cluster is contacted.
@@ -9,56 +14,33 @@ from __future__ import annotations
 
 import json
 import math
-import shutil
-import warnings
-from pathlib import Path
 
 import pytest
 
 pytest.importorskip("qblox_scheduler")
+
+from conftest import make_backend, make_experiment, recording_device  # noqa: E402
 
 from lchqb.backend.qblox_backend import (  # noqa: E402
     QBLOX_NOMINAL_FULL_SCALE_DBM,
     QbloxBackend,
 )
 
-REPO = Path(__file__).resolve().parents[1]
-FIXTURES = REPO.parents[0] / "SCQO" / "tests" / "demo_instr_config"
-HW_MIN = REPO / "tests" / "fixtures" / "hw_config_min.json"
-
-
-@pytest.fixture(autouse=True)
-def _fresh_instruments():
-    """QuantumDevice registers as a qcodes Instrument singleton — close between tests."""
-    yield
-    from qcodes import Instrument
-
-    Instrument.close_all()
-
 
 @pytest.fixture()
-def backend(tmp_path):
-    src = FIXTURES / "QBlox_Scheduler" / "dut_config_AS_QRC.json"
-    if not src.is_file():
-        pytest.skip("SCQO checkout with demo_instr_config not found side-by-side")
-    shutil.copy(src, tmp_path / "dut_config.json")
-    shutil.copy(HW_MIN, tmp_path / "hw_config.json")
-    return QbloxBackend(
-        hardware_config=str(tmp_path / "hw_config.json"),
-        device_config=str(tmp_path / "dut_config.json"),
-        output_dir=str(tmp_path / "out"),
-    )
+def backend(tmp_path, roster):
+    return make_backend(tmp_path, roster)
 
 
 def test_getter_math(backend):
-    view = backend.device.component("q1")
+    view = backend.device.component("q1_ro")
     view.readout_amp = 0.25
     # P = +5 (nominal full scale) - 10 (fixture att) + 20*log10(0.25)
     assert view.readout_power_dbm == pytest.approx(5.0 - 10.0 + 20 * math.log10(0.25))
 
 
 def test_setter_solves_even_att_and_exact_residual(backend):
-    view = backend.device.component("q1")
+    view = backend.device.component("q1_ro")
     opts = backend._hw_agent.hardware_configuration.hardware_options
 
     view.readout_power_dbm = -20.0
@@ -83,22 +65,22 @@ def test_setter_solves_even_att_and_exact_residual(backend):
 
 
 def test_zero_amp_power_undefined(backend):
-    view = backend.device.component("q1")
+    view = backend.device.component("q1_ro")
     view.readout_amp = 0.0
     with pytest.raises(ValueError, match="absolute power undefined"):
         _ = view.readout_power_dbm
-    assert backend.device.snapshot()["q1"]["readout_power_dbm"] is None
+    assert backend.device.snapshot()["q1_ro"]["readout_power_dbm"] is None
 
 
 def test_drive_getter_math(backend):
-    view = backend.device.component("q1")
+    view = backend.device.component("q1_xy")
     view.drive_amp = 0.25
     # P = +5 (nominal full scale) - 18 (fixture drive att) + 20*log10(0.25)
     assert view.drive_power_dbm == pytest.approx(5.0 - 18.0 + 20 * math.log10(0.25))
 
 
 def test_drive_setter_solves_even_att_and_exact_residual(backend):
-    view = backend.device.component("q1")
+    view = backend.device.component("q1_xy")
     opts = backend._hw_agent.hardware_configuration.hardware_options
 
     view.drive_power_dbm = -33.0
@@ -128,25 +110,24 @@ def test_unset_spec_amp_drive_power_undefined(backend):
     """The demo dut carries no spec block: spec_amp deserializes as NaN, so BOTH
     drive fields read unknown (never a NaN leaking through log10 into the config)
     until drive_power_dbm (or drive_amp) is written."""
-    view = backend.device.component("q1")
+    view = backend.device.component("q1_xy")
     assert math.isnan(view._element.spec.spec_amp)
     with pytest.raises(ValueError, match="absolute drive power undefined"):
         _ = view.drive_power_dbm
     with pytest.raises(ValueError, match="spec_amp is unset"):
         _ = view.drive_amp
-    snap = backend.device.snapshot()["q1"]
+    snap = backend.device.snapshot()["q1_xy"]
     assert snap["drive_amp"] is None and snap["drive_power_dbm"] is None
 
 
-def test_save_writes_both_files_consistently(backend, tmp_path):
+def test_save_writes_both_files_consistently(backend, roster, tmp_path):
     """save() writes hw_config.json (the runtime truth) AND keeps the copy embedded
     in dut_config.json in step — the divergence-trap regression."""
     from qblox_scheduler.backends.qblox_backend import QbloxHardwareCompilationConfig
     from qcodes import Instrument
 
-    view = backend.device.component("q1")
-    view.readout_power_dbm = -20.0
-    view.drive_power_dbm = -33.0
+    backend.device.component("q1_ro").readout_power_dbm = -20.0
+    backend.device.component("q1_xy").drive_power_dbm = -33.0
     backend.device.save()
 
     # the separate hw config re-validates and carries the new atts (from_file returns
@@ -169,18 +150,24 @@ def test_save_writes_both_files_consistently(backend, tmp_path):
         hardware_config=str(tmp_path / "hw_config.json"),
         device_config=str(tmp_path / "dut_config.json"),
         output_dir=str(tmp_path / "out2"),
+        roster=roster,
     )
-    assert reloaded.device.component("q1").readout_power_dbm == pytest.approx(-20.0, abs=1e-9)
-    assert reloaded.device.component("q1").drive_power_dbm == pytest.approx(-33.0, abs=1e-9)
+    assert reloaded.device.component("q1_ro").readout_power_dbm == pytest.approx(
+        -20.0, abs=1e-9)
+    assert reloaded.device.component("q1_xy").drive_power_dbm == pytest.approx(
+        -33.0, abs=1e-9)
 
 
-def test_power_context_matches_the_view(backend):
-    view = backend.device.component("q1")
-    view.readout_power_dbm = -20.0
-    view.drive_power_dbm = -33.0
+def test_power_context_matches_the_views(backend):
+    """power_context is addressed by MODE name (params.targets) and resolves the
+    target's default readout AND drive channels through the roster."""
+    readout = backend.device.component("q1_ro")
+    drive = backend.device.component("q1_xy")
+    readout.readout_power_dbm = -20.0
+    drive.drive_power_dbm = -33.0
     ctx = backend.power_context(["q1", "nonexistent"])
     assert ctx["q1"]["output_att_db"] == 18
-    assert ctx["q1"]["pulse_amp"] == pytest.approx(view.readout_amp)
+    assert ctx["q1"]["pulse_amp"] == pytest.approx(readout.readout_amp)
     assert ctx["q1"]["nominal_full_scale_dbm"] == QBLOX_NOMINAL_FULL_SCALE_DBM
     assert ctx["q1"]["readout_power_dbm"] == pytest.approx(-20.0, abs=1e-9)
     # the LO the data was taken at (a hand-edited lo_freq is otherwise invisible
@@ -188,17 +175,16 @@ def test_power_context_matches_the_view(backend):
     assert ctx["q1"]["readout_lo_freq_hz"] == pytest.approx(5.8e9)
     # the drive chain rides along (fixture: att written by the solve, LO 4.5e9)
     assert ctx["q1"]["drive_output_att_db"] == 30
-    assert ctx["q1"]["spec_amp"] == pytest.approx(view.drive_amp)
+    assert ctx["q1"]["spec_amp"] == pytest.approx(drive.drive_amp)
     assert ctx["q1"]["drive_power_dbm"] == pytest.approx(-33.0, abs=1e-9)
     assert ctx["q1"]["drive_lo_freq_hz"] == pytest.approx(4.5e9)
-    assert ctx["nonexistent"] == {}  # unknown element degrades, never raises
+    assert ctx["nonexistent"] == {}  # unknown target degrades, never raises
 
 
 def test_power_context_readout_survives_unset_spec(backend):
     """An element with no seeded spec_amp still reports its full readout chain —
     the drive block must never take the readout provenance down with it."""
-    view = backend.device.component("q1")
-    view.readout_power_dbm = -20.0
+    backend.device.component("q1_ro").readout_power_dbm = -20.0
     ctx = backend.power_context(["q1"])
     assert ctx["q1"]["readout_power_dbm"] == pytest.approx(-20.0, abs=1e-9)
     assert "drive_power_dbm" not in ctx["q1"]  # unknown, not NaN
@@ -212,7 +198,7 @@ def test_catalog_registers_absolute_punchout():
     assert "resonator_spectroscopy_power_chain" in names
 
 
-def test_absolute_punchout_axis_uniform_and_probe_is_per_point_1d(backend):
+def test_absolute_punchout_axis_uniform_and_probe_is_per_point_1d(backend, roster):
     """The chain-stepped absolute punchout: a uniform-dB power_dbm axis from the
     core (no driver override), and a probe that builds a 1D detuning schedule
     measuring at the element's CURRENT pulse_amp (the core run() solved the chain
@@ -223,8 +209,8 @@ def test_absolute_punchout_axis_uniform_and_probe_is_per_point_1d(backend):
         QbloxResonatorSpectroscopyPowerChain,
     )
 
-    exp = QbloxResonatorSpectroscopyPowerChain(
-        backend,
+    exp = make_experiment(
+        QbloxResonatorSpectroscopyPowerChain, backend, roster,
         QbloxResonatorSpectroscopyPowerChain.Parameters(
             targets=["q1"], max_power_dbm=-15.0, min_power_dbm=-45.0,
             num_power_points=11, num_freq_points=5, num_averages=10,
@@ -240,8 +226,7 @@ def test_absolute_punchout_axis_uniform_and_probe_is_per_point_1d(backend):
 
     # mimic one per-point call: the run loop swaps in the 1D detuning axis and has
     # already solved the chain (device state carries the point's amplitude)
-    view = backend.device.component("q1")
-    view.readout_power_dbm = -30.0
+    exp.device.channel("q1", "readout").readout_power_dbm = -30.0
     exp.sweep_axes = {"detuning_hz": axes["detuning_hz"]}
     schedule = exp.probe()
 
@@ -264,11 +249,11 @@ def test_absolute_punchout_axis_uniform_and_probe_is_per_point_1d(backend):
         assert "pulse_amp" not in overrides
 
 
-def test_power_amp_loop_order_and_relaxation_param(backend):
+def test_power_amp_loop_order_and_relaxation_param(backend, roster):
     """The fast absolute punchout: the amplitude axis is Python-UNROLLED (one
     NUMBER -> FREQUENCY block per power point, geometric amplitudes anchored at the
-    element's CURRENT readout_amp — the core run() solved the chain for the window
-    top before probing) so the dBm axis is UNIFORM, and
+    readout channel's CURRENT readout_amp — the core run() solved the chain for the
+    window top before probing) so the dBm axis is UNIFORM, and
     resonator_relaxation_time_ns sets the between-readout IdlePulse (absent -> the
     probe's built-in 4 ns)."""
     import numpy as np
@@ -277,8 +262,10 @@ def test_power_amp_loop_order_and_relaxation_param(backend):
         QbloxResonatorSpectroscopyPowerAmp,
     )
 
-    # mimic run()'s boundary set-top: the chain is solved for max_power_dbm
-    backend.device.component("q1").readout_power_dbm = -20.0
+    # the Session's device surface, built once; mimic run()'s boundary set-top
+    # (a recorded write through the channel entity, which pushes to the vendor)
+    device = recording_device(backend, roster)
+    device.channel("q1", "readout").readout_power_dbm = -20.0
 
     def build(relax_ns):
         exp = QbloxResonatorSpectroscopyPowerAmp(
@@ -288,6 +275,7 @@ def test_power_amp_loop_order_and_relaxation_param(backend):
                 resonator_relaxation_time_ns=relax_ns,
             ),
         )
+        exp.device = device
         exp.sweep_axes = exp.define_sweep()
         # the axis is the core's uniform absolute grid — no driver override
         power = np.asarray(exp.sweep_axes["power_dbm"])
@@ -340,7 +328,7 @@ def test_power_amp_loop_order_and_relaxation_param(backend):
         return out
 
     amps = collect_pulse_amps(schedule, [])
-    top_amp = backend.device.component("q1").readout_amp  # the solved top amplitude
+    top_amp = device.channel("q1", "readout").readout_amp  # the solved top amplitude
     assert len(amps) == 5 and len(set(amps)) == 5
     assert amps == sorted(amps)  # ascending: only upward power jumps between blocks
     assert amps[-1] == pytest.approx(top_amp)
@@ -362,30 +350,29 @@ def test_power_amp_loop_order_and_relaxation_param(backend):
         return out
 
     assert set(idle_durations(schedule)) == {4e-9}
-    from qcodes import Instrument
-    Instrument.close_all()
-    # rebuild backend state is unchanged; parameter set -> 20 us idle
+    # device state is unchanged by the rebuild; parameter set -> 20 us idle
     schedule2 = build(relax_ns=20000.0)
     assert set(idle_durations(schedule2)) == {2e-5}
 
 
-def test_flux_probe_uses_cw_saturation_not_x(backend):
-    """The flux probe now drives with a weak CW saturation VoltageOffset carrying
-    view.drive_amp (the drive_power_dbm residual on spec_amp) instead of a
-    calibrated X pulse; readout still follows the flux return to idle (QM parity).
+def test_flux_probe_uses_cw_saturation_not_x(backend, roster):
+    """The flux probe drives with a weak CW saturation VoltageOffset carrying the
+    drive channel's drive_amp (the drive_power_dbm residual on spec_amp) instead of
+    a calibrated X pulse; readout still follows the flux return to idle (QM parity).
     Structure only — a full compile needs flux-port wiring the minimal fixture lacks."""
     from lchqb.experiments.qubit_spectroscopy_flux_pulse import QbloxQubitSpectroscopyFluxPulse
 
-    view = backend.device.component("q1")
-    view.drive_power_dbm = -33.0  # parks spec_amp; the probe reads view.drive_amp
-    drive_amp = view.drive_amp
-
-    exp = QbloxQubitSpectroscopyFluxPulse(
-        backend,
+    exp = make_experiment(
+        QbloxQubitSpectroscopyFluxPulse, backend, roster,
         QbloxQubitSpectroscopyFluxPulse.Parameters(
             targets=["q1"], num_freq_points=3, num_flux_points=5, num_averages=7,
         ),
     )
+    # parks spec_amp on the drive channel; the probe reads the same knob back
+    view = exp.device.channel("q1", "drive")
+    view.drive_power_dbm = -33.0
+    drive_amp = view.drive_amp
+
     exp.sweep_axes = exp.define_sweep()
     schedule = exp.probe()
 

@@ -1,7 +1,7 @@
 """Qblox per-shot readout-frequency scan — supplies only ``probe()``.
 
 Per readout detuning the readout frequency is set via ``Measure(freq=...)``
-(detuning relative to the CURRENT ``readout_freq``). State preparation follows the
+(detuning relative to the CURRENT ``readout_freq_hz``). State preparation follows the
 cal13 dispersive-shift reference (measure |0>, then Reset -> X -> measure |1>),
 arranged as two sequential prepared-state blocks per frequency with the shot loop
 variable CAPTURED into labeled coords — the single_shot_readout per-shot
@@ -35,8 +35,8 @@ class QbloxReadoutFrequency(ReadoutFrequency):
 
         schedule = Schedule("readout_frequency_multiplexed")
         for qubit_name in self.params.targets:
-            view = self.backend.device.component(qubit_name)
-            center = view.readout_freq  # detuning is relative to the CURRENT readout_freq
+            # detuning is relative to the CURRENT readout_freq_hz (on q<n>_ro)
+            center = self.device.channel(qubit_name, "readout").readout_freq_hz
             sub = Schedule(f"readout_frequency_{qubit_name}")
             with sub.loop(
                 linspace(

@@ -13,17 +13,22 @@ from __future__ import annotations
 
 import json
 
-from scqo.cli import build_session
+from scqo.cli import build_session, default_targets
 
 
-def agent_decide(catalog: list[dict], device_state: dict) -> tuple[str, dict]:
+def agent_decide(catalog: list[dict], device_state: dict,
+                 targets: list[str]) -> tuple[str, dict]:
     """Stand-in for an LLM: pick an experiment + fill its parameters from the schema.
 
     A real agent would receive `catalog` as tool definitions and `device_state` as
     context, then emit a tool call. Here we hard-code one decision.
+
+    ``targets`` are ENTITY names of the kind the experiment measures (qubit-like
+    modes here) — the device state is keyed by every entity that carries knobs,
+    channels included (``q0_ro``, ``q0_xy``), so it is context, not a target list.
     """
     _ = catalog, device_state
-    return "resonator_spectroscopy", {"targets": list(device_state), "frequency_span_hz": 15e6}
+    return "resonator_spectroscopy", {"targets": targets, "frequency_span_hz": 15e6}
 
 
 def main() -> None:
@@ -35,7 +40,10 @@ def main() -> None:
 
     # 2. decide -> 3. act -> 4. read result -> (loop)
     for _ in range(1):  # one iteration for the demo; a real loop continues until a goal is met
-        experiment, params = agent_decide(catalog, sess.device_state())
+        # default_targets = every roster entity of the kind a single-qubit
+        # experiment measures (qubit-like modes), i.e. the agent's menu of targets
+        experiment, params = agent_decide(
+            catalog, sess.device_state(), default_targets(sess))
         # update="apply": an unattended agent applies its own results (scqo v0.6.0);
         # the default "suggest" would leave the state below unchanged and history empty.
         result = sess.run(experiment, params, update="apply")

@@ -1,15 +1,23 @@
 """Declarative field catalog for the Qblox backend — PURE DATA, no vendor imports.
 
-Per category, one :class:`scqo.fieldmap.VendorBinding` per realized pushed
-neutral field (where it lives on the qblox_scheduler device tree, in what unit,
-converted how — as a DESCRIPTION), one :class:`scqo.fieldmap.Unrealized` per
-pushed field this backend cannot realize, plus the
+Keyed by CHANNEL KIND (``drive`` / ``readout`` / ``flux``) since the greenfield
+model: knobs live on channel entities (``q1_xy``, ``q1_ro``, ``q1_z``), not on a
+single per-qubit component. Per kind, one :class:`scqo.fieldmap.VendorBinding`
+per realized KNOB (where it lives on the qblox_scheduler device tree, in what
+unit, converted how — as a DESCRIPTION), one :class:`scqo.fieldmap.Unrealized`
+per knob this backend cannot realize, plus the
 :class:`scqo.fieldmap.VendorOnly` inventory of calibration-relevant knobs that
-have no neutral counterpart yet. The EXECUTABLE conversions live in
-``QbloxReadableTransmon`` (qblox_backend.py) — this module documents them and is
-pinned to the implementation by ``tests/test_scqo_glue.py``
-(bindings | unrealized == scqo's pushed fields per category; imports stay
-vendor-free).
+have no neutral counterpart yet. The EXECUTABLE conversions live in the three
+channel views of ``qblox_backend.py`` (``QbloxDriveChannel`` /
+``QbloxReadoutChannel`` / ``QbloxFluxChannel``) — this module documents them and
+is pinned to the implementation by ``tests/test_scqo_glue.py``
+(bindings | unrealized == scqo's KNOB fields per kind; imports stay vendor-free).
+
+MONITORS are absent by construction: ``fidelity_g``/``fidelity_e``/``pos_*`` are
+measured performance OF the current knobs, never pushed, so they need no vendor
+binding and no Unrealized entry (the old ``readout_fidelity`` aggregate is gone;
+the per-state pair replaces it). Facts (``flux_offset``, ``flux_per_phi0``,
+``distortion_*``) live in physical.json and likewise bind nothing.
 
 Rendered by ``scqo state --fields``; strings reach lab consoles, keep them ASCII.
 """
@@ -19,13 +27,18 @@ from __future__ import annotations
 from scqo.fieldmap import Unrealized, VendorBinding, VendorOnly
 
 FIELD_BINDINGS: dict[str, dict[str, VendorBinding]] = {
-    "ReadableTransmon": {
-        "readout_freq": VendorBinding(
-            path="element.clock_freqs.readout", unit="Hz"),
-        "drive_freq": VendorBinding(
+    "drive": {
+        "drive_freq_hz": VendorBinding(
             path="element.clock_freqs.f01", unit="Hz"),
         "pi_amp": VendorBinding(
             path="element.rxy.amp180", unit=""),
+        "pi_duration_s": VendorBinding(
+            path="element.rxy.duration", unit="s",
+            note="pi/x180 pulse length, seconds (chipA: 200 ns here vs 32 ns on "
+                 "QM - genuinely per-chain calibrated). No 4 ns grid guard: the "
+                 "portable-grid contract is the READOUT pulse/window pair, and "
+                 "inventing one here would refuse values the scheduler accepts. "
+                 "QM counterpart: xy.operations['x180'].length (ns)"),
         "drive_amp": VendorBinding(
             path="element.spec.spec_amp", unit="",
             note="the saturation (spec) drive amplitude - the CW VoltageOffset "
@@ -45,6 +58,10 @@ FIELD_BINDINGS: dict[str, dict[str, VendorBinding]] = {
                  "different power (qubit_spectroscopy sets it and reverts exactly); "
                  "EVEN integers 0-60 dB, hardware compilation config authoritative",
         ),
+    },
+    "readout": {
+        "readout_freq_hz": VendorBinding(
+            path="element.clock_freqs.readout", unit="Hz"),
         "readout_amp": VendorBinding(
             path="element.measure.pulse_amp", unit=""),
         "readout_power_dbm": VendorBinding(
@@ -75,37 +92,48 @@ FIELD_BINDINGS: dict[str, dict[str, VendorBinding]] = {
                  "zero-padded constant integration weights",
         ),
     },
+    # The flux CHANNEL is realized (the probes play VoltageOffset on
+    # element.ports.flux); its one KNOB is not - see UNREALIZED below. Declared
+    # empty rather than omitted so the served-kind set is visible in one place.
+    "flux": {},
 }
 
-#: Pushed neutral fields THIS backend cannot realize (declared, never silent):
-#: pushes are skipped with the reason visible to doctor and the catalog view.
+#: Neutral KNOBS this backend cannot realize (declared, never silent): pushes are
+#: skipped with the reason visible to doctor and the catalog view. The scqo
+#: dataclass attribute is still spelled ``category``; it carries the channel KIND.
 UNREALIZED: dict[str, dict[str, Unrealized]] = {
-    "ReadableTransmon": {
-        "idle_flux_v": Unrealized(
-            "ReadableTransmon", "idle_flux_v",
-            "no flux-tunable device yet; the setter lands with the first flux chip"),
+    "drive": {
         "drag_beta": Unrealized(
-            "ReadableTransmon", "drag_beta",
+            "drive", "drag_beta",
             "no DRAG calibration wired for Qblox yet: rxy.beta exists (VENDOR_ONLY "
             "below) but no scqo experiment writes it here (the drag experiments are "
             "QM-only). Promote to a real rxy.beta binding when a Qblox DRAG "
             "experiment lands"),
+    },
+    "readout": {
         "readout_rotation_rad": Unrealized(
-            "ReadableTransmon", "readout_rotation_rad",
+            "readout", "readout_rotation_rad",
             "no single_shot_readout wired for Qblox yet: acq_rotation exists "
             "(VENDOR_ONLY below, DEGREES) but no scqo experiment proposes it here. "
             "Promote to a real acq_rotation binding when a Qblox discriminator "
             "experiment lands"),
         "readout_threshold": Unrealized(
-            "ReadableTransmon", "readout_threshold",
+            "readout", "readout_threshold",
             "no single_shot_readout wired for Qblox yet: acq_threshold exists "
             "(VENDOR_ONLY below) but no scqo experiment proposes it here. Promote "
             "to a real acq_threshold binding when a Qblox discriminator experiment "
             "lands"),
         "readout_rus_threshold": Unrealized(
-            "ReadableTransmon", "readout_rus_threshold",
+            "readout", "readout_rus_threshold",
             "no repeat-until-success on Qblox: no acq_rus knob exists (QM-only "
             "concept), so this field is never realized here"),
+    },
+    "flux": {
+        "idle_flux": Unrealized(
+            "flux", "idle_flux",
+            "no standing-bias slot on the Qblox element: the flux port is driven "
+            "per-schedule (VoltageOffset), and no DC source is wired into the "
+            "hardware config yet; the setter lands with the first flux chip"),
     },
 }
 
@@ -145,10 +173,10 @@ VENDOR_ONLY: dict[str, VendorOnly] = {
         unit="Hz", kind="vendor",
         doc="readout LO - PORT-level wiring shared by every element on that "
             "output; many LO/IF splits give the SAME RF, so SCQO owns only the "
-            "RF (readout_freq) and never moves the LO in a chain solve. Move it "
-            "so IF = readout_freq - lo_freq stays in the sequencer NCO range. "
-            "Edit hw_config.json while NO session is live (a session's save() "
-            "rewrites the file from memory) and restart kernels after. "
+            "RF (readout_freq_hz) and never moves the LO in a chain solve. Move "
+            "it so IF = readout_freq_hz - lo_freq stays in the sequencer NCO "
+            "range. Edit hw_config.json while NO session is live (a session's "
+            "save() rewrites the file from memory) and restart kernels after. "
             "QM counterpart: opx_output.upconverter_frequency"),
     "drive_lo_freq": VendorOnly(
         path='hardware_options.modulation_frequencies["<mw-port>-<qubit>.01"].lo_freq',
@@ -176,15 +204,17 @@ VENDOR_ONLY: dict[str, VendorOnly] = {
             "what every stored pi_amp AND the absolute drive power mean. "
             "QM counterpart: xy opx_output full_scale_power_dbm"),
     "x180_duration": VendorOnly(
-        path="element.rxy.duration", unit="s", kind="candidate",
-        doc="pi/x180 pulse length - neutral pi_duration_s candidate (seconds; "
-            "chipA: 200 ns here vs 32 ns on QM - genuinely per-chain "
-            "calibrated). QM counterpart: xy.operations['x180'].length (ns)"),
-    # NOTE: drag_beta was promoted to a neutral ReadableTransmon field (v0.10.x,
-    # QM-realized). It is Unrealized on Qblox for now (see UNREALIZED above) -
-    # element.rxy.beta is the vendor knob that WOULD realize it; the binding lands
-    # when a Qblox DRAG experiment is written. Removed from VENDOR_ONLY to avoid
-    # colliding with the tracked neutral field name.
+        path="element.rxy.duration", unit="s", kind="realizer",
+        doc="pi/x180 pulse length - it REALIZES the tracked pi_duration_s "
+            "(promoted to a neutral drive knob in the greenfield catalog; "
+            "binding above). The governed write is scqo set "
+            "QUBIT.pi_duration_s=...; a direct edit silently de-calibrates the "
+            "stored pi_amp with it. QM counterpart: "
+            "xy.operations['x180'].length (ns)"),
+    # NOTE: drag_beta is a neutral DRIVE knob (QM-realized). It is Unrealized on
+    # Qblox for now (see UNREALIZED above) - element.rxy.beta is the vendor knob
+    # that WOULD realize it; the binding lands when a Qblox DRAG experiment is
+    # written. Kept out of VENDOR_ONLY to avoid colliding with the tracked name.
     "acq_threshold": VendorOnly(
         path="element.measure.acq_threshold", unit="", kind="realizer",
         doc="single-shot discrimination threshold in the rotated acquisition IQ "

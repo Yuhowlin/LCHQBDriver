@@ -2,7 +2,7 @@
 
 Same one-method pattern as resonator spectroscopy, on a completely different physics
 experiment: X90 — idle(t) — X90 — Measure, looping the idle time. Parameters, the
-decaying-cosine fit, T2*/detuning extraction, and the drive_freq writeback are all
+decaying-cosine fit, T2*/detuning extraction, and the drive_freq_hz writeback are all
 inherited from ``scqo.experiments.QubitRamsey``.
 """
 
