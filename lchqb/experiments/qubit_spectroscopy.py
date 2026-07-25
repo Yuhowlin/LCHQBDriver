@@ -3,7 +3,7 @@
 Two-tone: a continuous weak microwave drive (voltage offset on the drive port, cal05
 reference pattern) while the drive-clock NCO steps through the sweep; measure after
 the qubit reaches its driven steady state. Parameters, peak fitting and the
-drive_freq writeback are inherited from ``scqo.experiments.QubitSpectroscopy``.
+drive_freq_hz writeback are inherited from ``scqo.experiments.QubitSpectroscopy``.
 
 Drive power contract: the core ``run()`` already solved the drive chain for
 ``drive_power_dbm`` (recorded set -> acquire -> revert), parking the residual on
@@ -17,6 +17,8 @@ from typing import Any
 
 from scqo import register
 from scqo.experiments import QubitSpectroscopy
+
+from ._vendor import vendor_element
 
 
 @register
@@ -41,9 +43,9 @@ class QbloxQubitSpectroscopy(QubitSpectroscopy):
 
         schedule = Schedule("qubit_spectroscopy_multiplexed")
         for qubit_name in self.params.targets:
-            view = self.backend.device.component(qubit_name)
-            element = view._element  # driver-internal: ports live on the raw element
-            center = view.drive_freq
+            view = self.device.channel(qubit_name, "drive")
+            element = vendor_element(self, qubit_name, "drive")  # ports: vendor-only
+            center = view.drive_freq_hz
             drive_amp = float(view.drive_amp)  # run() parked the solved residual here
             drive_clock = f"{qubit_name}.01"
             sub = Schedule(f"qubit_spec_{qubit_name}")

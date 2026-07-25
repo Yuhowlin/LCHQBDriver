@@ -64,25 +64,34 @@ def main() -> int:
     qd = QuantumDevice.from_json_file(str(work / "dut_config.json"))
     print(f"[1/6] loaded device '{qd.name}' | elements: {list(qd.elements)}")
 
-    from lchqb.backend.qblox_backend import QbloxDeviceModel
+    qubits = args.targets or [n for n in qd.elements if n.startswith("q")]
+    if not qubits:
+        raise SystemExit(f"no q* elements in this config ({list(qd.elements)}) "
+                         f"— name the ones to exercise with --targets")
 
-    dm = QbloxDeviceModel(qd, config_file=str(work / "dut_config.json"))
+    from lchqb.backend.qblox_backend import QbloxDeviceModel
+    from scqo.testing import demo_components
+
+    # The driver resolves every name through the ROSTER (q1_ro -> the readout
+    # knobs of vendor element q1), so it is needed before the device model.
+    # This throwaway self-test derives a chipT-shaped roster for the discovered
+    # elements — one multiplexed feedline + a drive wire each; the REAL roster
+    # lives in <data_root>/<device>/components.toml and is what `scqo run` uses.
+    roster = demo_components(tuple(qubits), pair=False)
+
+    dm = QbloxDeviceModel(qd, roster, config_file=str(work / "dut_config.json"))
     snap = dm.snapshot()
-    for name, fields in snap.items():
+    for name, fields in snap.items():  # keyed by CHANNEL entity (q1_ro, q1_xy)
         print(f"      {name}: {fields}")
-    qubits = args.targets or [n for n in snap if n.startswith("q")]
     print(f"[2/6] snapshot OK | testing targets: {qubits}")
 
     import lchqb.experiments  # noqa: F401
     from scqo import Session
-    from scqo.testing import SimulatedBackend, demo_roster
+    from scqo.testing import SimulatedBackend
 
-    # a Session needs the device's component roster; this throwaway self-test
-    # derives a chipT-shaped one for the discovered transmons (the real roster
-    # lives in <data_root>/<device>/components.toml, used by `scqo run`)
-    sess = Session(SimulatedBackend(dm), demo_roster(tuple(qubits)),
+    sess = Session(SimulatedBackend(dm), roster,
                    data_root=work / "data", device_name="selftest", state_sync="push")
-    before = {q: dict(v) for q, v in sess.device_state().items()}
+    before = {name: dict(v) for name, v in sess.device_state().items()}
     failures = []
     for experiment in ("resonator_spectroscopy", "qubit_power_rabi"):
         # update="apply": this self-test exists to exercise writeback (scqo v0.6.0
@@ -93,17 +102,21 @@ def main() -> int:
         if not ok:
             failures.append(experiment)
 
+    # the knobs those two experiments write live on the CHANNEL entities:
+    # readout_freq_hz on <q>_ro, pi_amp on <q>_xy
     after = sess.device_state()
-    moved = [q for q in qubits if after[q] != before[q]]
+    touched = [f"{q}_ro" for q in qubits] + [f"{q}_xy" for q in qubits]
+    moved = [name for name in touched if after[name] != before[name]]
     print(f"[4/6] writeback reached the real device tree for: {moved or 'NONE'}")
-    if set(moved) != set(qubits):
+    if set(moved) != set(touched):
         failures.append("writeback")
 
     dm.save()
     reloaded = QuantumDevice.from_json_file(str(work / "dut_config.json"))
-    dm2 = QbloxDeviceModel(reloaded)
+    dm2 = QbloxDeviceModel(reloaded, roster)
     round_trip = all(
-        abs(dm2.snapshot()[q]["readout_freq"] - after[q]["readout_freq"]) < 1e-3 for q in qubits
+        abs(dm2.snapshot()[f"{q}_ro"]["readout_freq_hz"]
+            - after[f"{q}_ro"]["readout_freq_hz"]) < 1e-3 for q in qubits
     )
     print(f"[5/6] vendor-format save/reload round-trip: {'OK' if round_trip else 'MISMATCH'}")
     if not round_trip:
@@ -123,13 +136,20 @@ def main() -> int:
         from qblox_scheduler.backends.graph_compilation import SerialCompiler
 
         from lchqb.backend.qblox_backend import QbloxBackend
-        from scqo.registry import get
+        from scqo.device import RecordingDevice
+        from scqo.experiments import get
+        from scqo.stores import state_store
 
         backend = QbloxBackend(hardware_config=str(work / "hw_config.json"),
                                device_config=str(work / "dut_config.json"),
-                               output_dir=str(work / "compile_out"))
+                               output_dir=str(work / "compile_out"),
+                               roster=roster)
         exp_cls = get("resonator_spectroscopy")
         exp = exp_cls(backend, exp_cls.Parameters(targets=qubits, num_points=11, num_averages=2))
+        # the probe reads its neutral state through the recording surface, the
+        # way a Session hands it over (in-memory store: nothing persists here)
+        exp.device = RecordingDevice(backend.device, roster,
+                                     state_store(None, roster))
         exp.sweep_axes = exp.define_sweep()
         schedule = exp.probe()
         qd_real = backend._hw_agent.quantum_device

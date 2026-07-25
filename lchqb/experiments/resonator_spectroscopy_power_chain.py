@@ -3,7 +3,7 @@
 Parameters, the per-point chain-stepping run lifecycle (python loop: re-solve
 output_att + pulse_amp per power point, one 1D acquisition each,
 boundary-recorded set/revert), the punchout analysis and the
-readout_power_dbm/readout_freq proposals are inherited from
+readout_power_dbm/readout_freq_hz proposals are inherited from
 ``scqo.experiments.ResonatorSpectroscopyPowerChain``.
 
 By the time ``probe()`` runs, the core loop has already written THIS point's
@@ -40,8 +40,7 @@ class QbloxResonatorSpectroscopyPowerChain(ResonatorSpectroscopyPowerChain):
 
         schedule = Schedule("resonator_spectroscopy_power_chain_point")
         for qubit_name in self.params.targets:
-            view = self.backend.device.component(qubit_name)
-            center = view.readout_freq
+            center = self.device.channel(qubit_name, "readout").readout_freq_hz
             sub = Schedule(f"punchout_point_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(

@@ -12,45 +12,24 @@ broke every later run. Offline: no cluster is contacted.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 
 pytest.importorskip("qblox_scheduler")
 
+from conftest import HW_MIN, make_backend, make_experiment  # noqa: E402
+
 from lchqb.backend.qblox_backend import QbloxBackend  # noqa: E402
 
-REPO = Path(__file__).resolve().parents[1]
-FIXTURES = REPO.parents[0] / "SCQO" / "tests" / "demo_instr_config"
-HW_MIN = REPO / "tests" / "fixtures" / "hw_config_min.json"
 
-
-@pytest.fixture(autouse=True)
-def _fresh_instruments():
-    """QuantumDevice registers as a qcodes Instrument singleton — close between tests."""
-    yield
-    from qcodes import Instrument
-
-    Instrument.close_all()
-
-
-def _make_backend(tmp_path: Path, poison: bool) -> QbloxBackend:
-    src = FIXTURES / "QBlox_Scheduler" / "dut_config_AS_QRC.json"
-    if not src.is_file():
-        pytest.skip("SCQO checkout with demo_instr_config not found side-by-side")
-    shutil.copy(src, tmp_path / "dut_config.json")
+def _make_backend(tmp_path: Path, roster, poison: bool) -> QbloxBackend:
     hw = json.loads(HW_MIN.read_text(encoding="utf-8"))
     if poison:  # exactly the disease a pre-fix save() wrote to chipA's file
         hw["hardware_description"]["cluster_A"]["modules"]["8"].update(
             {"complex_output_0": None, "complex_input_0": None,
              "digital_output_0": None, "digital_output_1": None})
-    (tmp_path / "hw_config.json").write_text(json.dumps(hw, indent=2), encoding="utf-8")
-    return QbloxBackend(
-        hardware_config=str(tmp_path / "hw_config.json"),
-        device_config=str(tmp_path / "dut_config.json"),
-        output_dir=str(tmp_path / "out"),
-    )
+    return make_backend(tmp_path, roster, hw_config=hw)
 
 
 def _null_set_fields(backend: QbloxBackend) -> list[str]:
@@ -64,15 +43,17 @@ def _null_set_fields(backend: QbloxBackend) -> list[str]:
     return bad
 
 
-def _compile_res_spec(backend: QbloxBackend):
+def _compile_res_spec(backend: QbloxBackend, roster):
     """Build the real resonator-spectroscopy probe Schedule and compile it offline —
     the same SerialCompiler call HardwareAgent.run makes after connecting."""
     import lchqb.experiments  # noqa: F401  (registers the qblox probe classes)
     from qblox_scheduler.backends.graph_compilation import SerialCompiler
-    from scqo.registry import get
+    from scqo.experiments import get
 
     exp_cls = get("resonator_spectroscopy")
-    exp = exp_cls(backend, exp_cls.Parameters(targets=["q1"], num_points=11, num_averages=2))
+    exp = make_experiment(
+        exp_cls, backend, roster,
+        exp_cls.Parameters(targets=["q1"], num_points=11, num_averages=2))
     exp.sweep_axes = exp.define_sweep()
     schedule = exp.probe()
     qd = backend._hw_agent.quantum_device
@@ -80,8 +61,8 @@ def _compile_res_spec(backend: QbloxBackend):
     return SerialCompiler().compile(schedule=schedule, config=qd.generate_compilation_config())
 
 
-def test_save_writes_no_null_channel_descriptions(tmp_path):
-    backend = _make_backend(tmp_path, poison=False)
+def test_save_writes_no_null_channel_descriptions(tmp_path, roster):
+    backend = _make_backend(tmp_path, roster, poison=False)
     backend.device.save()
     written = json.loads((tmp_path / "hw_config.json").read_text(encoding="utf-8"))
     module = written["hardware_description"]["cluster_A"]["modules"]["8"]
@@ -93,13 +74,13 @@ def test_save_writes_no_null_channel_descriptions(tmp_path):
     assert not [k for k, v in emb.items() if v is None]
 
 
-def test_null_poisoned_config_loads_normalized_and_compiles(tmp_path):
+def test_null_poisoned_config_loads_normalized_and_compiles(tmp_path, roster):
     """The chipA 2026-07-16 pin: a null-poisoned hw config must (a) normalize at
     construction (nulls leave model_fields_set) and (b) COMPILE a real probe
     schedule — the exact step that crashed."""
-    backend = _make_backend(tmp_path, poison=True)
+    backend = _make_backend(tmp_path, roster, poison=True)
     assert _null_set_fields(backend) == []  # (a) normalized on load
-    assert _compile_res_spec(backend) is not None  # (b) compiles offline
+    assert _compile_res_spec(backend, roster) is not None  # (b) compiles offline
 
     # and the next save() self-heals the file on disk
     backend.device.save()
@@ -108,6 +89,6 @@ def test_null_poisoned_config_loads_normalized_and_compiles(tmp_path):
     assert "complex_output_0" not in module  # the poison is gone from disk
 
 
-def test_clean_config_still_compiles(tmp_path):
-    backend = _make_backend(tmp_path, poison=False)
-    assert _compile_res_spec(backend) is not None
+def test_clean_config_still_compiles(tmp_path, roster):
+    backend = _make_backend(tmp_path, roster, poison=False)
+    assert _compile_res_spec(backend, roster) is not None

@@ -26,7 +26,8 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
 
         schedule = Schedule("power_rabi_multiplexed")
         for qubit_name in self.params.targets:
-            pi_amp = self.backend.device.component(qubit_name).pi_amp  # neutral field -> absolute volts
+            # neutral field on the target's drive CHANNEL (q<n>_xy) -> absolute volts
+            pi_amp = self.device.channel(qubit_name, "drive").pi_amp
             amp_abs = amp_factor * pi_amp
             sub = Schedule(f"power_rabi_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):

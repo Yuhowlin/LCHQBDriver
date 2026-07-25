@@ -2,7 +2,7 @@
 
 cal07b-style CW pattern: per flux point set a ``VoltageOffset`` on the qubit's own
 flux line, step the drive clock across the detuning window around the current
-``drive_freq``, apply a weak CW SATURATION drive (``view.drive_amp`` — the
+``drive_freq_hz``, apply a weak CW SATURATION drive (``view.drive_amp`` — the
 ``drive_power_dbm`` residual parked on ``spec.spec_amp``) held through the driven
 dwell, then return the flux to its idle value BEFORE measuring (clean readout at
 the calibrated operating point, matching the QM flux probe). That return-to-idle
@@ -20,25 +20,12 @@ parks ``drive_power_dbm`` (a recorded set -> revert) before this probe reads
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from scqo import register
 from scqo.experiments import QubitSpectroscopyFluxPulse
 
-
-def _idle_flux(element: Any) -> float:
-    """The flux to measure at: the calibrated sweet spot when known, else 0 V.
-
-    Tolerates both scheduler API generations (legacy QCoDeS callables and
-    pydantic-model plain attributes) and elements without ``flux_params``.
-    """
-    try:
-        sweet = element.flux_params.sweet_spot
-        sweet = float(sweet() if callable(sweet) else sweet)
-    except (AttributeError, TypeError):
-        return 0.0
-    return sweet if math.isfinite(sweet) else 0.0
+from ._vendor import idle_flux as _idle_flux, vendor_element
 
 
 @register
@@ -67,11 +54,13 @@ class QbloxQubitSpectroscopyFluxPulse(QubitSpectroscopyFluxPulse):
 
         schedule = Schedule("qubit_spectroscopy_flux_pulse_multiplexed")
         for qubit_name in self.params.targets:
-            view = self.backend.device.component(qubit_name)
-            element = view._element  # driver-internal: ports live on the raw element
+            view = self.device.channel(qubit_name, "drive")
+            # ports are vendor-only; each is reached through the channel whose
+            # FUNCTION it carries, so a target with no flux wiring refuses here
+            element = vendor_element(self, qubit_name, "flux")
             flux_port = element.ports.flux
-            microwave_port = element.ports.microwave
-            center = view.drive_freq  # detuning is relative to the CURRENT drive_freq
+            microwave_port = vendor_element(self, qubit_name, "drive").ports.microwave
+            center = view.drive_freq_hz  # detuning is relative to the CURRENT drive_freq_hz
             drive_amp = float(view.drive_amp)  # run() parked the solved spec_amp residual
             drive_clock = f"{qubit_name}.01"
             idle_flux = _idle_flux(element)

@@ -18,21 +18,29 @@ experiment API (`D:\github\SCQO`) against the **Qblox** control stack
 ## Layout
 ```
 lchqb/
-  backend/qblox_backend.py   # QbloxBackend (scqo.Backend) + QbloxDeviceModel/QbloxReadableTransmon
-                             #   (subclasses scqo.device.make_view_base("ReadableTransmon"))
+  backend/qblox_backend.py   # QbloxBackend (scqo.Backend) + QbloxDeviceModel + ONE view class
+                             #   per CHANNEL KIND: QbloxDriveChannel / QbloxReadoutChannel /
+                             #   QbloxFluxChannel (subclass scqo.device.make_view_base("drive"|
+                             #   "readout"|"flux")); all three resolve onto the SAME
+                             #   qblox_scheduler DeviceElement (the channel's single target)
                              #   wraps qblox_scheduler.HardwareAgent + QuantumDevice
   experiments/
     __init__.py              # imports each experiment module so @register runs (populates catalog)
+    _vendor.py               # the probes' one door out of the neutral surface: the raw
+                             #   DeviceElement behind a target's default channel (ports,
+                             #   flux sweet spot), addressed through the ROSTER
     <name>.py                # one module per core experiment (all 12): Qblox<Name>(<Name>) with
                              #   only probe() — e.g. resonator_spectroscopy, qubit_ramsey, ...
 qblox_config/                # ~ quam_config: device-model + config generation (stubs)
 qblox_state/                 # ~ quam_state: serialized dut_config.json / hw_config.json (generated)
 lchqb/scqo_backend.py            # the `scqo.backends` entry-point factory
-                                 #   build_backend(cfg, setup): loads the SELECTED named
-                                 #   setup's vendor folder (setup["instrument_config"],
+                                 #   build_backend(cfg, setup, roster): loads the SELECTED
+                                 #   named setup's vendor folder (setup["instrument_config"],
                                  #   DERIVED <cid>/<setup>/backend_config since scqo v0.9;
                                  #   canonical names dut_config.json + hw_config.json;
-                                 #   loud SystemExit when missing); vendor imports stay lazy
+                                 #   loud SystemExit when missing) and threads the device
+                                 #   ROSTER into the backend (entity-name resolution needs
+                                 #   it); vendor imports stay lazy
 scripts/                         # check_real_config.py + ai_loop_demo.py (a worked Session example)
 ```
 Students use the **`scqo` command** and edit **nothing** here: select a setup
@@ -43,6 +51,10 @@ simulated and saves nothing. Setup/labconfig detail lives in `SCQO\INSTALL.md` �
 1. Subclass the backend-free experiment from `scqo.experiments.<name>`.
 2. Implement only `probe()` using `qblox_scheduler` (import the vendor lib *inside* the
    method / backend so `import lchqb` stays light and the simulated path needs no Qblox).
+   Read device state through the CHANNEL that owns the knob —
+   `self.device.channel(target, "readout").readout_freq_hz`, `...("drive").pi_amp` —
+   never `backend.device.component(<qubit>)`; vendor-only bits (ports, the flux sweet
+   spot) come from `_vendor.vendor_element(self, target, kind)`.
 3. `@register` the subclass and import the module in `lchqb/experiments/__init__.py`.
 Everything else (parameters, fitting, writeback, simulation) is inherited from `scqo`.
 
@@ -60,8 +72,13 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   BEFORE `QuantumDevice.from_json_file`, or the device tree won't deserialize.
   A dut config missing the `spec` block still loads (spec_amp defaults NaN =
   field unknown until seeded).
-- `QbloxReadableTransmon` reads/writes BOTH scheduler API generations (legacy QCoDeS
+- The channel views read/write BOTH scheduler API generations (legacy QCoDeS
   callables and the pydantic-model plain attributes).
+- `QbloxDeviceModel.component()` takes a ROSTER ENTITY name (`q1_ro`, `q1_xy`,
+  `q1_z`) and resolves it through the roster (kind -> view class, single target ->
+  vendor element). Everything the vendor does not realize — modes, lines,
+  composites, pump/multi-target channels, a target with no element — is a KeyError.
+  A view's `.name` is the ENTITY name; `_element.name` is the vendor element.
 - The agent's `hardware_configuration` dict is AUTHORITATIVE: every run recompiles from
   it and re-pushes attenuations, so a direct qcodes `.set()` is overwritten.
 - `save()` writes BOTH config files (`dut_config.json` + `hw_config.json`); the dut's
@@ -88,5 +105,10 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   uniform-dBm axis.
 
 ## Tests
-`tests/test_scqo_glue.py` (scqo↔backend glue) and `tests/test_qblox_power.py`
-(the readout AND drive absolute-power paths).
+`tests/conftest.py` holds the shared fixture chip — a schema-3 roster for the demo
+dut config (`ROSTER_TOML`: q1/q2 + coupler c12, one multiplexed feedline, a drive and
+a flux wire each) plus `make_backend` / `make_experiment` (the latter attaches the
+`RecordingDevice` a Session would). `tests/test_scqo_glue.py` (scqo↔backend glue, the
+per-kind fieldmap drift alarm, the `components()` witness), `tests/test_qblox_power.py`
+(the readout AND drive absolute-power paths), `tests/test_probe_surface.py` (EVERY
+registered probe builds its Schedule against the channel-entity surface).
