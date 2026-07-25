@@ -96,7 +96,7 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   only while NO session is live — `save()` rewrites the file from the in-memory
   config and would silently revert the edit — and restart notebook kernels after.
   `power_context` stamps the readout LO into every run record.
-- Placement rule (which store owns which value): `scqo state --rule` / SCQO TUTORIAL §9.
+- Placement rule (which store owns which value): `scqo state --rule` / SCQO TUTORIAL §10.
   A vendor copy of a neutral/physical value is legal only as a CACHE with a named
   refresh trigger — the SCQO stores are truth.
 - Two readout-power probes: `resonator_spectroscopy_power_chain` sweeps power with a
