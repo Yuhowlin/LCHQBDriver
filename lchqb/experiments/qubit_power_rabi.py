@@ -6,11 +6,12 @@ fit, pi_amp recovery and writeback are inherited from ``scqo.experiments.QubitPo
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from scqo import register
 from scqo.experiments import QubitPowerRabi
 
+from lchqb.experiments._reset import add_reset
 from lchqb.experiments._state import measure_kwargs
 
 
@@ -18,9 +19,13 @@ from lchqb.experiments._state import measure_kwargs
 class QbloxQubitPowerRabi(QubitPowerRabi):
     """Build a multiplexed power-Rabi Schedule for a Qblox cluster."""
 
+    #: readout is held at the calibrated point for the whole run and the Reset is
+    #: a genuine state reset, so reset_method='active' is valid here (_reset.py).
+    supports_active_reset: ClassVar[bool] = True
+
     def probe(self) -> Any:
         from qblox_scheduler import Schedule
-        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X
+        from qblox_scheduler.operations import IdlePulse, Measure, X
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
         amp_factor = self.sweep_axes["amp_factor"]
@@ -35,7 +40,7 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
             sub = Schedule(f"power_rabi_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(linspace(amp_abs[0], amp_abs[-1], amp_abs.size, dtype=DType.AMPLITUDE)) as amp:
-                    sub.add(Reset(qubit_name))
+                    add_reset(sub, self, qubit_name)
                     sub.add(X(qubit_name, amp180=amp))
                     sub.add(
                         Measure(

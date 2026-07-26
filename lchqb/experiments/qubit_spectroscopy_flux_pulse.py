@@ -25,6 +25,7 @@ from typing import Any
 from scqo import register
 from scqo.experiments import QubitSpectroscopyFluxPulse
 
+from ._reset import add_reset
 from ._vendor import idle_flux as _idle_flux, vendor_element
 
 
@@ -42,7 +43,6 @@ class QbloxQubitSpectroscopyFluxPulse(QubitSpectroscopyFluxPulse):
         from qblox_scheduler.operations import (
             IdlePulse,
             Measure,
-            Reset,
             SetClockFrequency,
             VoltageOffset,
         )
@@ -87,7 +87,11 @@ class QbloxQubitSpectroscopyFluxPulse(QubitSpectroscopyFluxPulse):
                         #    the cal05/cal07b idiom) — no calibrated pi needed
                         sub.add(SetClockFrequency(clock=drive_clock, frequency=freq))
                         sub.add(VoltageOffset(drive_amp, 0, port=microwave_port, clock=drive_clock))
-                        sub.add(Reset(qubit_name))
+                        # this experiment's Parameters carry no reset_method at all
+                        # (it is flux-tagged, not qubit_reset-tagged), so add_reset
+                        # always resolves thermal here; it goes through the one door
+                        # so that "no probe builds the gate itself" stays checkable.
+                        add_reset(sub, self, qubit_name)
                         sub.add(VoltageOffset(0, 0, port=microwave_port, clock=drive_clock))
                         # 3. flux back to idle BEFORE the readout (measure at the
                         #    calibrated operating point, matching the QM flux probe)

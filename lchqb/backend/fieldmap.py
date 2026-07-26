@@ -150,8 +150,13 @@ UNREALIZED: dict[str, dict[str, Unrealized]] = {
         # only the RUS exit has no Qblox counterpart.
         "readout_rus_threshold": Unrealized(
             "readout", "readout_rus_threshold",
-            "no repeat-until-success on Qblox: no acq_rus knob exists (QM-only "
-            "concept), so this field is never realized here"),
+            "no SECOND threshold to write: this is a repeat-until-success LOOP "
+            "EXIT, and Qblox active reset is not a loop. reset_method='active' "
+            "here plays a fixed number of ConditionalResets (see "
+            "experiments/_reset.py), each branching on acq_threshold, so there is "
+            "nothing an exit threshold would control. NOT 'Qblox has no "
+            "feedback' - it does, via conditional playback. QM's while_(I > "
+            "rus_exit_threshold) is what this field exists for"),
     },
     "flux": {
         "idle_flux": Unrealized(

@@ -24,14 +24,20 @@ from typing import Any
 from scqo import register
 from scqo.experiments import ReadoutPower
 
+from ._reset import add_reset
+
 
 @register
 class QbloxReadoutPower(ReadoutPower):
     """Build a multiplexed per-shot readout-amplitude Schedule for a Qblox cluster."""
 
+    # No supports_active_reset: this probe SWEEPS the readout amplitude, so the
+    # discriminator single_shot_readout solved at the nominal power is wrong at
+    # almost every point. _reset.py refuses reset_method='active' by name.
+
     def probe(self) -> Any:
         from qblox_scheduler import Schedule
-        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X
+        from qblox_scheduler.operations import IdlePulse, Measure, X
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
         prefactors = self.sweep_axes["amp_prefactor"]
@@ -49,7 +55,7 @@ class QbloxReadoutPower(ReadoutPower):
             ) as amp:
                 # prepared_state 0: Reset -> Measure, one labeled bin per shot
                 with sub.loop(arange(0, num_shots, 1, DType.NUMBER)) as shot:
-                    sub.add(Reset(qubit_name))
+                    add_reset(sub, self, qubit_name)
                     sub.add(
                         Measure(
                             qubit_name,
@@ -64,7 +70,7 @@ class QbloxReadoutPower(ReadoutPower):
                     )
                 # prepared_state 1: Reset -> X -> Measure, one labeled bin per shot
                 with sub.loop(arange(0, num_shots, 1, DType.NUMBER)) as shot:
-                    sub.add(Reset(qubit_name))
+                    add_reset(sub, self, qubit_name)
                     sub.add(X(qubit=qubit_name))
                     sub.add(
                         Measure(

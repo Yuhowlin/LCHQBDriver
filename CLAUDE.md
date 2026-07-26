@@ -101,8 +101,34 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   These two arm `use_state_discrimination` on the four coherent-drive probes:
   `experiments/_state.py` asks for `acq_protocol="ThresholdedAcquisition"` and the
   compiler reads the numbers off the element. Vendor default `0.0` = UNCALIBRATED and
-  the probes refuse it by name. `readout_rus_threshold` stays Unrealized (QM-only).
-  Calibrated by `single_shot_readout`, whose Qblox `update()` proposes both.
+  the probes refuse it by name. Calibrated by `single_shot_readout`, whose Qblox
+  `update()` proposes both. `readout_rus_threshold` stays Unrealized — it is a
+  repeat-until-success LOOP EXIT and active reset here is not a loop, so there is no
+  second threshold to write. Qblox absolutely does have feedback; it just isn't that.
+- **Active reset** (`reset_method="active"`) lives in `experiments/_reset.py`, the ONE
+  door every probe builds its reset through (`add_reset`) — enforced by
+  `test_no_probe_constructs_the_reset_gate_directly`. Vendor `ConditionalReset` =
+  thresholded `Measure` + `ConditionalOperation(X)` at a fixed `TRIGGER_DELAY` of
+  364 ns; ~18.8 µs against chipA's 1.86 ms thermal wait. Four rules, each a SILENT
+  failure if broken:
+  1. Opt-in is per probe (`supports_active_reset`, default DENY) and limited to the
+     four coherent-drive carriers. Everything else refuses BY NAME — the readout-sweep
+     probes because the discriminator is only valid at the calibrated point,
+     `single_shot_readout` because it IS that calibration, `qubit_spectroscopy` because
+     its `Reset` is a driven dwell. `QbloxBackend.acquire` re-checks before `probe()`.
+  2. The conditional measurement takes `acq_channel=f"cond_{q}"`. On the probe's own
+     `S_21_<q>` the schedule still compiles and the bins MERGE (5-point sweep → 10 bins,
+     dying later in `_to_canonical`).
+  3. The discriminator guard does NOT ride on `use_state_discrimination` — active reset
+     with averaged I/Q readout is legal, and an uncalibrated `ConditionalReset` compiles
+     clean and thresholds every shot against zero.
+  4. Targets stay SEQUENTIAL (one outstanding feedback label). The compiler catches only
+     the *interleaved* shape; two whole `ConditionalReset`s overlapping compile clean and
+     are a hardware hazard. `thermalization_time_ns` + `active` is refused, not ignored.
+  COMPILE TIME grows with `num_averages` under active reset only —
+  `compile_conditional_playback` unrolls every loop in Python. Measured (51 points, 1
+  target): thermal flat ~0.3 s; active 0.94 / 3.79 / 14.11 s at 100 / 1000 / 4000. It is
+  spent inside `acquire()` before anything reaches the cluster, so a big run looks hung.
 - Readout/drive LO = `hw_config.json` `hardware_options.modulation_frequencies`
   (PORT-level, shared by every element on the output; untracked wiring). Hand-edit
   only while NO session is live — `save()` rewrites the file from the in-memory
@@ -136,12 +162,12 @@ in the lab venv too:
 `D:\github\.venv-qblox\Scripts\python.exe -m pytest tests/ -q`.
 
 ### Testing discipline — here, just run the whole thing
-`uv run pytest tests/ -q` — **88 tests, ~31 s** (plain `uv run` is correct: `scqo` is a hard
+`uv run pytest tests/ -q` — **120 tests, ~33 s** (plain `uv run` is correct: `scqo` is a hard
 dependency in `pyproject.toml`, so uv's sync keeps it). At this size a selection map would cost
 more attention than it saves; unlike SCQO (476 tests, ~7 min) and scqat (296 / ~53 s), the full
 suite IS the targeted run. Run it before every commit.
 
-The one narrowing worth knowing: **`test_scqo_glue.py` is ~14 s of the 31 s** — it shells out to
+The one narrowing worth knowing: **`test_scqo_glue.py` is ~14 s of the 33 s** — it shells out to
 the real `scqo` CLI and runs the AI-loop demo end-to-end. While iterating on a probe, loop on
 `uv run pytest tests/test_probe_surface.py tests/test_time_grid.py -q` (30 tests, ~10 s measured —
 per-test time is milliseconds, the cost is fixture + qblox_scheduler import) and pick the glue test
@@ -152,6 +178,7 @@ back up before you commit. Below ~10 s there is nothing left to win here; don't 
 | `test_probe_surface.py` | every registered probe **compiles** its Schedule on the channel-entity surface |
 | `test_time_grid.py` | the specific swept WINDOWS whose naive linspace step was fractional |
 | `test_state_discrimination.py` | `use_state_discrimination`: the two knobs, the thresholded probes, the `state` decode, the single_shot_readout proposal |
+| `test_active_reset.py` | `reset_method="active"`: the opt-in census, the four refusals, the acq-channel rule, rounds/settle, the sequential-feedback rule (needs `fixtures/hw_config_2q.json`) |
 | `test_qblox_power.py` | output-att solves, the hardware-config write surface, dual-file save, `power_context` |
 | `test_qblox_reset.py` | `thermalization_time_s` as a neutral drive-channel knob |
 | `test_readout_duration.py` | duration/window knobs on the readout view (pure stubs, no qblox_scheduler) |

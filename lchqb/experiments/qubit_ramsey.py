@@ -8,11 +8,12 @@ inherited from ``scqo.experiments.QubitRamsey``.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from scqo import register
 from scqo.experiments import QubitRamsey
 
+from lchqb.experiments._reset import add_reset
 from lchqb.experiments._state import measure_kwargs
 
 
@@ -20,9 +21,15 @@ from lchqb.experiments._state import measure_kwargs
 class QbloxQubitRamsey(QubitRamsey):
     """Build a multiplexed Ramsey Schedule for a Qblox cluster."""
 
+    #: readout is held at the calibrated point for the whole run and the Reset is
+    #: a genuine state reset, so reset_method='active' is valid here (_reset.py).
+    #: Ramsey is also the SENSITIVE test of the settle idle: residual readout
+    #: photons Stark-shift the first X90 and surface as a fitted-detuning error.
+    supports_active_reset: ClassVar[bool] = True
+
     def probe(self) -> Any:
         from qblox_scheduler import Schedule
-        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X90
+        from qblox_scheduler.operations import IdlePulse, Measure, X90
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
         idle_ns = self.sweep_axes["idle_time_ns"]
@@ -39,7 +46,7 @@ class QbloxQubitRamsey(QubitRamsey):
                 ) as tau:
                     # First pi/2; the artificial detuning is applied as a frame phase that
                     # advances with the idle time, producing the Ramsey fringe.
-                    sub.add(Reset(qubit_name))
+                    add_reset(sub, self, qubit_name)
                     sub.add(X90(qubit_name))
                     sub.add(IdlePulse(tau))
                     # Detune via accumulated phase = 2*pi * detuning * tau on the second pi/2.

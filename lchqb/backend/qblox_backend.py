@@ -180,8 +180,9 @@ class QbloxReadoutChannel(_QbloxChannelView, make_view_base("readout")):
     """The scqo READOUT channel view (``q1_ro``) over the target's ``DeviceElement``.
 
     Carries the dispersive-readout knobs: tone frequency, pulse amplitude/power,
-    and the pulse/window pair. The discriminator knobs are Unrealized here
-    (fieldmap.UNREALIZED); the monitors (fidelity_g/e, blob positions) are never
+    the pulse/window pair, and the discriminator (rotation + threshold, realized
+    on acq_rotation/acq_threshold — only the RUS loop exit is Unrealized, see
+    fieldmap.UNREALIZED). The monitors (fidelity_g/e, blob positions) are never
     pushed and so have no vendor surface at all.
     """
 
@@ -303,14 +304,18 @@ class QbloxReadoutChannel(_QbloxChannelView, make_view_base("readout")):
         _write(self._element.measure, "acq_threshold", float(value))
 
     # ------------------------------------------------------- unrealized knobs
-    # Repeat-until-success is a QM concept with no Qblox counterpart: there is no
-    # acq_rus knob to write, so this one stays Unrealized (fieldmap.UNREALIZED)
-    # and needs a concrete raising pair (make_view_base declares an abstract
-    # property per knob of the kind).
+    # A repeat-until-success LOOP EXIT threshold, which Qblox active reset has no
+    # use for: it plays a fixed number of ConditionalResets rather than looping
+    # (experiments/_reset.py), so acq_threshold alone decides every branch. There
+    # is no second threshold to write, so this one stays Unrealized
+    # (fieldmap.UNREALIZED) and needs a concrete raising pair — make_view_base
+    # declares an abstract property per knob of the kind.
     _RUS_UNREALIZED = (
-        "readout_rus_threshold is Unrealized on the Qblox backend: repeat-until-"
-        "success is a QM-only concept and no acq_rus knob exists here (the "
-        "rotation and threshold ARE realized — acq_rotation/acq_threshold)"
+        "readout_rus_threshold is Unrealized on the Qblox backend: it is a "
+        "repeat-until-success loop-exit threshold, and active reset here is not "
+        "a loop — it plays a fixed number of ConditionalResets, each branching "
+        "on acq_threshold. Feedback itself IS supported (conditional playback); "
+        "the rotation and threshold are realized (acq_rotation/acq_threshold)"
     )
 
     @property
@@ -826,7 +831,12 @@ class QbloxBackend(Backend):
         ``run()``. So this must bracket the whole acquire, not just probe().
 
         Writes go straight to the vendor tree, NOT through the recording
-        device: a per-run override must leave no ChangeRecord and no store row."""
+        device: a per-run override must leave no ChangeRecord and no store row.
+
+        THERMAL ONLY. ``ConditionalReset`` never reads ``element.reset.duration``,
+        so under ``reset_method='active'`` this would set and revert a value
+        nothing plays. ``experiments/_reset.py::check_reset_method`` refuses that
+        combination upstream — same discipline as the RuntimeError below."""
         override_ns = getattr(experiment.params, "thermalization_time_ns", None)
         if override_ns is None:
             yield
@@ -847,6 +857,14 @@ class QbloxBackend(Backend):
                 view.thermalization_time_s = previous[name]
 
     def acquire(self, experiment: "Experiment") -> xr.Dataset:
+        # The reset-method backstop. add_reset() already refuses inside every
+        # probe, but that only fires if the probe remembers to call it; this
+        # fires for anything carrying the neutral field, before we touch the
+        # instrument. check_reset_method is side-effect free, so being called
+        # twice costs nothing.
+        from lchqb.experiments._reset import check_reset_method
+
+        check_reset_method(experiment)
         with self._thermalization_override(experiment):
             schedule = experiment.probe()  # native qblox_scheduler.Schedule
             raw = self._hw_agent.run(schedule, timeout=120)

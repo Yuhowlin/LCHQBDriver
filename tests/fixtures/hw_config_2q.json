@@ -1,0 +1,45 @@
+{
+    "config_type": "QbloxHardwareCompilationConfig",
+    "hardware_description": {
+        "cluster_A": {
+            "instrument_type": "Cluster",
+            "modules": {
+                "6": { "instrument_type": "QCM" },
+                "8": { "instrument_type": "QRM_RF" },
+                "10": { "instrument_type": "QCM_RF" }
+            },
+            "sequence_to_file": false,
+            "ref": "internal",
+            "ip": "192.0.2.1"
+        }
+    },
+    "hardware_options": {
+        "output_att": {
+            "q1:res-q1.ro": 10,
+            "q1:mw-q1.01": 18,
+            "q2:res-q2.ro": 10,
+            "q2:mw-q2.01": 18
+        },
+        "modulation_frequencies": {
+            "q1:res-q1.ro": { "lo_freq": 5.8e9 },
+            "q1:mw-q1.01": { "lo_freq": 4.5e9 },
+            "q2:res-q2.ro": { "lo_freq": 5.8e9 },
+            "q2:mw-q2.01": { "lo_freq": 4.5e9 }
+        }
+    },
+    "connectivity": {
+        "graph": [
+            [ "cluster_A.module8.complex_output_0", "q1:res" ],
+            [ "cluster_A.module8.complex_input_0", "q1:res" ],
+            [ "cluster_A.module10.complex_output_0", "q1:mw" ],
+
+            [ "cluster_A.module8.complex_output_0", "q2:res" ],
+            [ "cluster_A.module8.complex_input_0", "q2:res" ],
+            [ "cluster_A.module10.complex_output_1", "q2:mw" ],
+
+            [ "cluster_A.module6.real_output_0", "q1:fl" ],
+            [ "cluster_A.module6.real_output_1", "q2:fl" ],
+            [ "cluster_A.module6.real_output_2", "c12:fl" ]
+        ]
+    }
+}

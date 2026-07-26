@@ -20,14 +20,20 @@ from typing import Any
 from scqo import register
 from scqo.experiments import ReadoutFrequency
 
+from ._reset import add_reset
+
 
 @register
 class QbloxReadoutFrequency(ReadoutFrequency):
     """Build a multiplexed per-shot readout-frequency Schedule for a Qblox cluster."""
 
+    # No supports_active_reset: this probe SWEEPS the readout frequency, so the
+    # discriminator single_shot_readout solved at the nominal tone is wrong at
+    # almost every point. _reset.py refuses reset_method='active' by name.
+
     def probe(self) -> Any:
         from qblox_scheduler import Schedule
-        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X
+        from qblox_scheduler.operations import IdlePulse, Measure, X
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
         detuning = self.sweep_axes["detuning_hz"]
@@ -48,7 +54,7 @@ class QbloxReadoutFrequency(ReadoutFrequency):
             ) as freq:
                 # prepared_state 0: Reset -> Measure, one labeled bin per shot
                 with sub.loop(arange(0, num_shots, 1, DType.NUMBER)) as shot:
-                    sub.add(Reset(qubit_name))
+                    add_reset(sub, self, qubit_name)
                     sub.add(
                         Measure(
                             qubit_name,
@@ -71,7 +77,7 @@ class QbloxReadoutFrequency(ReadoutFrequency):
                     sub.add(IdlePulse(4e-9))
                 # prepared_state 1: Reset -> X -> Measure, one labeled bin per shot
                 with sub.loop(arange(0, num_shots, 1, DType.NUMBER)) as shot:
-                    sub.add(Reset(qubit_name))
+                    add_reset(sub, self, qubit_name)
                     sub.add(X(qubit=qubit_name))
                     sub.add(
                         Measure(

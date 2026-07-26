@@ -9,11 +9,12 @@ exponential-envelope fit and T2_echo reporting are inherited from
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from scqo import register
 from scqo.experiments import QubitEcho
 
+from lchqb.experiments._reset import add_reset
 from lchqb.experiments._state import measure_kwargs
 
 
@@ -21,9 +22,13 @@ from lchqb.experiments._state import measure_kwargs
 class QbloxQubitEcho(QubitEcho):
     """Build a multiplexed Hahn-echo Schedule for a Qblox cluster."""
 
+    #: readout is held at the calibrated point for the whole run and the Reset is
+    #: a genuine state reset, so reset_method='active' is valid here (_reset.py).
+    supports_active_reset: ClassVar[bool] = True
+
     def probe(self) -> Any:
         from qblox_scheduler import Schedule
-        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X, X90
+        from qblox_scheduler.operations import IdlePulse, Measure, X, X90
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
         wait_ns = self.sweep_axes["wait_time_ns"]
@@ -37,7 +42,7 @@ class QbloxQubitEcho(QubitEcho):
                 with sub.loop(
                     linspace(wait_ns[0] * 1e-9, wait_ns[-1] * 1e-9, wait_ns.size, dtype=DType.TIME)
                 ) as tau:
-                    sub.add(Reset(qubit_name))
+                    add_reset(sub, self, qubit_name)
                     sub.add(X90(qubit_name))
                     # central pi pulse refocuses quasi-static dephasing; the two
                     # tau/2 gaps make tau the TOTAL idle time (cal15 pattern)

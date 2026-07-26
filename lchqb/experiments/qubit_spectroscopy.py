@@ -18,6 +18,7 @@ from typing import Any
 from scqo import register
 from scqo.experiments import QubitSpectroscopy
 
+from ._reset import add_reset
 from ._vendor import vendor_element
 
 
@@ -30,7 +31,6 @@ class QbloxQubitSpectroscopy(QubitSpectroscopy):
         from qblox_scheduler.operations import (
             IdlePulse,
             Measure,
-            Reset,
             SetClockFrequency,
             VoltageOffset,
         )
@@ -56,8 +56,11 @@ class QbloxQubitSpectroscopy(QubitSpectroscopy):
                     # continuous weak drive on the microwave port (cal05 pattern)
                     sub.add(VoltageOffset(drive_amp, 0, port=element.ports.microwave, clock=drive_clock))
                     sub.add(SetClockFrequency(clock=drive_clock, frequency=freq))
-                    # let the qubit reach the driven steady state before measuring
-                    sub.add(Reset(qubit_name))
+                    # let the qubit reach the driven steady state before measuring.
+                    # This Reset is the DRIVEN DWELL, not a state reset — the CW
+                    # drive above is still on — which is why _reset.py refuses
+                    # reset_method='active' here (no supports_active_reset).
+                    add_reset(sub, self, qubit_name)
                     sub.add(
                         Measure(
                             qubit_name,

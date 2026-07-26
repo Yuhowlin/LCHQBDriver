@@ -7,11 +7,12 @@ cal14 reference pattern: Reset -> X (pi pulse) -> Measure delayed by the swept w
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from scqo import register
 from scqo.experiments import QubitRelaxation
 
+from lchqb.experiments._reset import add_reset
 from lchqb.experiments._state import measure_kwargs
 
 
@@ -19,9 +20,13 @@ from lchqb.experiments._state import measure_kwargs
 class QbloxQubitRelaxation(QubitRelaxation):
     """Build a multiplexed T1 Schedule for a Qblox cluster."""
 
+    #: readout is held at the calibrated point for the whole run and the Reset is
+    #: a genuine state reset, so reset_method='active' is valid here (_reset.py).
+    supports_active_reset: ClassVar[bool] = True
+
     def probe(self) -> Any:
         from qblox_scheduler import Schedule
-        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X
+        from qblox_scheduler.operations import IdlePulse, Measure, X
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
         wait_ns = self.sweep_axes["wait_time_ns"]
@@ -35,7 +40,7 @@ class QbloxQubitRelaxation(QubitRelaxation):
                 with sub.loop(
                     linspace(wait_ns[0] * 1e-9, wait_ns[-1] * 1e-9, wait_ns.size, dtype=DType.TIME)
                 ) as tau:
-                    sub.add(Reset(qubit_name))
+                    add_reset(sub, self, qubit_name)
                     sub.add(X(qubit=qubit_name))
                     sub.add(
                         Measure(

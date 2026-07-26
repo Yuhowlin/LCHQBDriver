@@ -25,14 +25,21 @@ from scqo import register
 from scqo.experiments import SingleShotReadout
 from scqo.result import Outcome
 
+from ._reset import add_reset
+
 
 @register
 class QbloxSingleShotReadout(SingleShotReadout):
     """Build a multiplexed per-shot SSRO Schedule for a Qblox cluster."""
 
+    # No supports_active_reset: this experiment IS the discriminator's
+    # calibration, so resetting with it would be circular — and a conditional
+    # pi driven by the very threshold being measured biases the |1> blob.
+    # _reset.py refuses reset_method='active' by name.
+
     def probe(self) -> Any:
         from qblox_scheduler import Schedule
-        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X
+        from qblox_scheduler.operations import IdlePulse, Measure, X
         from qblox_scheduler.operations.loop_domains import DType, arange
 
         num_shots = int(self.params.num_shots)
@@ -42,7 +49,7 @@ class QbloxSingleShotReadout(SingleShotReadout):
             sub = Schedule(f"ssro_{qubit_name}")
             # prepared_state 0: Reset -> Measure, one labeled bin per shot
             with sub.loop(arange(0, num_shots, 1, DType.NUMBER)) as shot:
-                sub.add(Reset(qubit_name))
+                add_reset(sub, self, qubit_name)
                 sub.add(
                     Measure(
                         qubit_name,
@@ -52,7 +59,7 @@ class QbloxSingleShotReadout(SingleShotReadout):
                 )
             # prepared_state 1: Reset -> X -> Measure, one labeled bin per shot
             with sub.loop(arange(0, num_shots, 1, DType.NUMBER)) as shot:
-                sub.add(Reset(qubit_name))
+                add_reset(sub, self, qubit_name)
                 sub.add(X(qubit=qubit_name))
                 sub.add(
                     Measure(
