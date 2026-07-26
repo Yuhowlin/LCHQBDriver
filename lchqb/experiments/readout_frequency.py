@@ -61,6 +61,14 @@ class QbloxReadoutFrequency(ReadoutFrequency):
                             acq_channel=f"S_21_{qubit_name}",
                         )
                     )
+                    # NOT optional, and NOT the depletion wait (Reset already is
+                    # one): Measure(freq=...) appends a zero-duration clock
+                    # RESTORE, whose latched UpdateParameters may not land on
+                    # the loop's ControlFlowReturn. 4 ns = the compiler's
+                    # MIN_TIME_BETWEEN_OPERATIONS, so this costs nothing per
+                    # shot. Without it, chipA 2026-07-26: "Parameter operation
+                    # ... cannot be scheduled exactly before ... ControlFlowReturn".
+                    sub.add(IdlePulse(4e-9))
                 # prepared_state 1: Reset -> X -> Measure, one labeled bin per shot
                 with sub.loop(arange(0, num_shots, 1, DType.NUMBER)) as shot:
                     sub.add(Reset(qubit_name))
@@ -77,6 +85,9 @@ class QbloxReadoutFrequency(ReadoutFrequency):
                             acq_channel=f"S_21_{qubit_name}",
                         )
                     )
+                    sub.add(IdlePulse(4e-9))  # same clock-restore reason as above
+            # and once more OUTSIDE the loops — a different check: a parameter
+            # op may not sit at the very end of a TimeableSchedule either
             sub.add(IdlePulse(4e-9))
             schedule.add(sub)
         return schedule

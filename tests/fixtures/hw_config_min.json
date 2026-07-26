@@ -4,6 +4,7 @@
         "cluster_A": {
             "instrument_type": "Cluster",
             "modules": {
+                "6": { "instrument_type": "QCM" },
                 "8": { "instrument_type": "QRM_RF" },
                 "10": { "instrument_type": "QCM_RF" }
             },
@@ -26,7 +27,11 @@
         "graph": [
             [ "cluster_A.module8.complex_output_0", "q1:res" ],
             [ "cluster_A.module8.complex_input_0", "q1:res" ],
-            [ "cluster_A.module10.complex_output_0", "q1:mw" ]
+            [ "cluster_A.module10.complex_output_0", "q1:mw" ],
+
+            [ "cluster_A.module6.real_output_0", "q1:fl" ],
+            [ "cluster_A.module6.real_output_1", "q2:fl" ],
+            [ "cluster_A.module6.real_output_2", "c12:fl" ]
         ]
     }
 }

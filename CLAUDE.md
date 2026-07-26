@@ -111,7 +111,17 @@ a flux wire each) plus `make_backend` / `make_experiment` (the latter attaches t
 `RecordingDevice` a Session would). `tests/test_scqo_glue.py` (scqo↔backend glue, the
 per-kind fieldmap drift alarm, the `components()` witness), `tests/test_qblox_power.py`
 (the readout AND drive absolute-power paths), `tests/test_probe_surface.py` (EVERY
-registered probe builds its Schedule against the channel-entity surface).
+registered probe COMPILES its Schedule against the channel-entity surface — building
+one proves nothing, since the time grid, the DAC range and the latched-parameter
+alignment all live in the compiler; `conftest.compile_probe` is the shared door).
+
+**One vendor version, both venvs.** `uv run pytest` uses `.venv`; `scqo run` on the
+cluster uses `D:\github\.venv-qblox`. They must hold the same `qblox-scheduler` — on
+2026-07-26 they did not (b4 vs b6) and the two versions *disagreed about whether a
+schedule is legal*: `readout_frequency` compiled clean offline and died on hardware.
+Both are now 1.0.0b6 + qblox_instruments 1.3.0. After changing either, run the suite
+in the lab venv too:
+`D:\github\.venv-qblox\Scripts\python.exe -m pytest tests/ -q`.
 
 ### Testing discipline — here, just run the whole thing
 `uv run pytest tests/ -q` — **61 tests, ~23 s** (plain `uv run` is correct: `scqo` is a hard
@@ -127,8 +137,8 @@ back up before you commit. Below ~10 s there is nothing left to win here; don't 
 
 | File | Covers |
 |---|---|
-| `test_probe_surface.py` | every registered probe builds its Schedule on the channel-entity surface |
-| `test_time_grid.py` | every schedule **compiles**, not merely exists (chipA 2026-07-26 regression) |
+| `test_probe_surface.py` | every registered probe **compiles** its Schedule on the channel-entity surface |
+| `test_time_grid.py` | the specific swept WINDOWS whose naive linspace step was fractional |
 | `test_qblox_power.py` | output-att solves, the hardware-config write surface, dual-file save, `power_context` |
 | `test_qblox_reset.py` | `thermalization_time_s` as a neutral drive-channel knob |
 | `test_readout_duration.py` | duration/window knobs on the readout view (pure stubs, no qblox_scheduler) |

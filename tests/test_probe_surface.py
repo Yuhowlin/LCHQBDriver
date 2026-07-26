@@ -1,11 +1,20 @@
-"""Every Qblox probe builds its Schedule against the greenfield device surface.
+"""Every Qblox probe COMPILES its Schedule against the greenfield device surface.
 
 The cutover re-homed every probe's device READ from one per-qubit view onto the
 CHANNEL ENTITY that owns the knob — ``self.device.channel(q, "readout")``
 (``q1_ro``), ``...channel(q, "drive")`` (``q1_xy``) — plus the roster-resolved raw
 element for the vendor-only bits (ports, the flux sweet spot). A stale field
 spelling or a missing entity would otherwise surface only on hardware, so this
-walks the WHOLE registered Qblox catalog and builds each probe once.
+walks the WHOLE registered Qblox catalog and exercises each probe once.
+
+It COMPILES rather than merely builds, and the difference is the whole point.
+A built Schedule is just a tree of operations; every rule that can reject one
+lives in the compiler — the 1 ns time grid, the DAC range, and the latched
+parameter alignment that ``readout_frequency`` violated on chipA 2026-07-26 by
+ending a loop body with ``Measure(freq=...)`` (the clock restore that factory
+appends is a zero-duration parameter op, which may not land on the loop's
+``ControlFlowReturn``). Building it caught nothing. Compiling it catches the
+whole class, for every probe, including the ones nobody thought to list.
 
 Offline: the real dut fixture + the minimal hw config, no cluster.
 """
@@ -16,7 +25,12 @@ import pytest
 
 pytest.importorskip("qblox_scheduler")
 
-from conftest import ROSTER_TOML, make_backend, make_experiment  # noqa: E402
+from conftest import (  # noqa: E402
+    ROSTER_TOML,
+    compile_probe,
+    make_backend,
+    make_experiment,
+)
 
 import lchqb.experiments  # noqa: E402,F401  (import side effect: @register)
 from scqo.experiments import catalog, get  # noqa: E402
@@ -28,9 +42,13 @@ QBLOX_PROBES = sorted(
 
 #: keep the schedules small — this test is about the device surface, not physics
 #: (the values still clear each Parameters' own minimums: >4 sweep points, >=100
-#: shots; the per-shot loops are hardware loops, so the schedule stays tiny)
+#: shots; the per-shot loops are hardware loops, so the schedule stays tiny).
+#: ``max_amp_factor`` is the one value chosen for the COMPILER rather than for
+#: size: the fixture's pi_amp x the stock 2.0 exceeds the DAC's [-1, 1] range,
+#: which is an amplitude concern and not what this file is about.
 SMALL = {"num_points": 5, "num_freq_points": 5, "num_flux_points": 5,
-         "num_power_points": 5, "num_averages": 2, "num_shots": 100}
+         "num_power_points": 5, "num_averages": 2, "num_shots": 100,
+         "max_amp_factor": 0.5}
 
 
 def _params(cls):
@@ -45,17 +63,19 @@ def test_the_whole_driver_catalog_is_covered():
 
 
 @pytest.mark.parametrize("name", QBLOX_PROBES)
-def test_probe_builds_a_schedule(tmp_path, roster, name):
+def test_probe_compiles(tmp_path, roster, name):
     cls = get(name)
     backend = make_backend(tmp_path, roster)
     exp = make_experiment(cls, backend, roster, _params(cls))
     # the two-tone probes play the drive chain's residual (spec_amp), which the
     # fixture leaves unseeded (NaN); the core run() solves it before probing
     exp.device.channel("q1", "drive").drive_power_dbm = -33.0
-    exp.sweep_axes = exp.define_sweep()
 
-    schedule = exp.probe()
-    assert schedule.operations, f"{name}: empty schedule"
+    # compile, don't just build — the compiler is where the instrument's own
+    # rules live (see this module's docstring). compile_probe sets sweep_axes
+    # and calls probe() the way the Session does.
+    compiled = compile_probe(backend, exp)
+    assert compiled.operations, f"{name}: empty schedule"
 
 
 def test_flux_probe_refuses_a_target_with_no_flux_channel(tmp_path):

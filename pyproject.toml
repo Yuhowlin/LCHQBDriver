@@ -10,8 +10,12 @@ dependencies = [
     # Qblox control stack (Schedule, HardwareAgent, QuantumDevice). The pre-release
     # floor is REQUIRED: PyPI's only non-prerelease is an empty 0.0.0 placeholder that
     # fails to build, and resolvers only consider pre-releases when the specifier
-    # names one. 1.0.0b4 = the version proven against the lab cluster (2026-07-04).
-    "qblox-scheduler>=1.0.0b4",
+    # names one. 1.0.0b6 = the version the offline suite and the lab venv both run
+    # (2026-07-26); pairs with qblox_instruments 1.3.0 / Cluster firmware 2.1.0.
+    # The floor is not cosmetic: b4 REFUSES a parameter op at a loop-body end and
+    # b6 quietly relocates it, so a schedule can compile on one and not the other.
+    # Keep this and D:\github\.venv-qblox on the same version.
+    "qblox-scheduler>=1.0.0b6",
     "xarray>=2024.7.0",
     "lmfit>=1.3.3",
     "numpy>=1.26",

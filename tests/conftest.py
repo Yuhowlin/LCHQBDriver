@@ -130,3 +130,21 @@ def make_experiment(cls, backend, roster, params):
     exp = cls(backend, params)
     exp.device = recording_device(backend, roster)
     return exp
+
+
+def compile_probe(backend, exp):
+    """Compile a probe's Schedule exactly as ``HardwareAgent.run`` would.
+
+    Building a Schedule proves almost nothing: the 1 ns time grid, the latched
+    parameter alignment and the DAC range are all enforced inside the COMPILER,
+    so a probe that only ever gets built fails for the first time on the
+    instrument. Every probe test goes through here.
+    """
+    from qblox_scheduler.backends.graph_compilation import SerialCompiler
+
+    exp.sweep_axes = exp.define_sweep()
+    schedule = exp.probe()
+    qd = backend._hw_agent.quantum_device
+    qd.hardware_config = backend._hw_agent.hardware_configuration
+    return SerialCompiler().compile(schedule=schedule,
+                                    config=qd.generate_compilation_config())
