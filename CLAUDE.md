@@ -112,3 +112,25 @@ a flux wire each) plus `make_backend` / `make_experiment` (the latter attaches t
 per-kind fieldmap drift alarm, the `components()` witness), `tests/test_qblox_power.py`
 (the readout AND drive absolute-power paths), `tests/test_probe_surface.py` (EVERY
 registered probe builds its Schedule against the channel-entity surface).
+
+### Testing discipline — here, just run the whole thing
+`uv run pytest tests/ -q` — **61 tests, ~23 s** (plain `uv run` is correct: `scqo` is a hard
+dependency in `pyproject.toml`, so uv's sync keeps it). At this size a selection map would cost
+more attention than it saves; unlike SCQO (473 tests) and scqat (283 / 102 s), the full suite
+IS the targeted run. Run it before every commit.
+
+The one narrowing worth knowing: **`test_scqo_glue.py` is ~14 s of the 23 s** — it shells out to
+the real `scqo` CLI and runs the AI-loop demo end-to-end. While iterating on a probe, loop on
+`uv run pytest tests/test_probe_surface.py tests/test_time_grid.py -q` (30 tests, ~10 s measured —
+per-test time is milliseconds, the cost is fixture + qblox_scheduler import) and pick the glue test
+back up before you commit. Below ~10 s there is nothing left to win here; don't over-narrow.
+
+| File | Covers |
+|---|---|
+| `test_probe_surface.py` | every registered probe builds its Schedule on the channel-entity surface |
+| `test_time_grid.py` | every schedule **compiles**, not merely exists (chipA 2026-07-26 regression) |
+| `test_qblox_power.py` | output-att solves, the hardware-config write surface, dual-file save, `power_context` |
+| `test_qblox_reset.py` | `thermalization_time_s` as a neutral drive-channel knob |
+| `test_readout_duration.py` | duration/window knobs on the readout view (pure stubs, no qblox_scheduler) |
+| `test_hw_config_serialization.py` | explicit nulls never written or trusted |
+| `test_scqo_glue.py` | the `scqo` CLI works in THIS venv + the qblox factory (slow — see above) |
