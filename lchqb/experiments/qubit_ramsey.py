@@ -20,7 +20,7 @@ class QbloxQubitRamsey(QubitRamsey):
 
     def probe(self) -> Any:
         from qblox_scheduler import Schedule
-        from qblox_scheduler.operations import IdlePulse, Measure, X90
+        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X90
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
         idle_ns = self.sweep_axes["idle_time_ns"]
@@ -36,6 +36,7 @@ class QbloxQubitRamsey(QubitRamsey):
                 ) as tau:
                     # First pi/2; the artificial detuning is applied as a frame phase that
                     # advances with the idle time, producing the Ramsey fringe.
+                    sub.add(Reset(qubit_name))
                     sub.add(X90(qubit_name))
                     sub.add(IdlePulse(tau))
                     # Detune via accumulated phase = 2*pi * detuning * tau on the second pi/2.
@@ -47,6 +48,6 @@ class QbloxQubitRamsey(QubitRamsey):
                             acq_channel=f"S_21_{qubit_name}",
                         )
                     )
-                    sub.add(IdlePulse(10e-6))
+                    sub.add(IdlePulse(4e-9))
             schedule.add(sub)
         return schedule

@@ -18,7 +18,7 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
 
     def probe(self) -> Any:
         from qblox_scheduler import Schedule
-        from qblox_scheduler.operations import IdlePulse, Measure, X
+        from qblox_scheduler.operations import IdlePulse, Measure, Reset, X
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
         amp_factor = self.sweep_axes["amp_factor"]
@@ -32,6 +32,7 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
             sub = Schedule(f"power_rabi_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(linspace(amp_abs[0], amp_abs[-1], amp_abs.size, dtype=DType.AMPLITUDE)) as amp:
+                    sub.add(Reset(qubit_name))
                     sub.add(X(qubit_name, amp180=amp))
                     sub.add(
                         Measure(
@@ -40,6 +41,6 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
                             acq_channel=f"S_21_{qubit_name}",
                         )
                     )
-                    sub.add(IdlePulse(10e-6))
+                    sub.add(IdlePulse(4e-9))
             schedule.add(sub)
         return schedule

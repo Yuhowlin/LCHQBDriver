@@ -39,6 +39,15 @@ FIELD_BINDINGS: dict[str, dict[str, VendorBinding]] = {
                  "portable-grid contract is the READOUT pulse/window pair, and "
                  "inventing one here would refuse values the scheduler accepts. "
                  "QM counterpart: xy.operations['x180'].length (ns)"),
+        "thermalization_time_s": VendorBinding(
+            path="element.reset.duration", unit="s",
+            note="passive-reset wait between shots: the IdlePulse length the "
+                 "scheduler's Reset() gate compiles to, so every probe honours "
+                 "it with no probe-side argument. Absolute seconds on both "
+                 "sides - the one field that maps 1:1. Calibrated by "
+                 "qubit_relaxation (thermalization_factor x T1). QM "
+                 "counterpart: q.thermalization_time_ns (ns, 4 ns grid), which "
+                 "overrides QUAM's derived thermalization_time_factor * T1"),
         "drive_amp": VendorBinding(
             path="element.spec.spec_amp", unit="",
             note="the saturation (spec) drive amplitude - the CW VoltageOffset "
@@ -161,13 +170,6 @@ VENDOR_ONLY: dict[str, VendorOnly] = {
             "electronics latency). The TOF measurement's product is written "
             "HERE, in SECONDS, offline - never a neutral field. QM counterpart: "
             "resonator.time_of_flight (ns)"),
-    "reset_duration": VendorOnly(
-        path="element.reset.duration", unit="s", kind="vendor",
-        doc="passive reset / initialization wait between shots (IdlePulse "
-            "length) - a policy value (should be >> T1, ~1/kappa), not a "
-            "calibration outcome; per-run override exists "
-            "(resonator_relaxation_time_ns). QM derives its wait as "
-            "factor*T1 instead of an absolute time"),
     "readout_lo_freq": VendorOnly(
         path='hardware_options.modulation_frequencies["<ro-port>-<qubit>.ro"].lo_freq',
         unit="Hz", kind="vendor",

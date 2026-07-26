@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -299,6 +300,24 @@ class QbloxDriveChannel(_QbloxChannelView, make_view_base("drive")):
         # plain seconds value on both backends, and refusing off-grid ones here
         # would invent a contract the neutral catalog does not state.
         _write(self._element.rxy, "duration", value)
+
+    # Lives on the element's IdlingReset submodule, not on a drive parameter:
+    # the wait is the qubit's own relaxation, and the scheduler's Reset() gate
+    # compiles to IdlePulse(reset.duration). The drive channel is the neutral
+    # home because scqo knobs live on channels, never on modes. Both sides are
+    # absolute seconds, so this is a pass-through with no conversion — the one
+    # backend where the neutral field maps 1:1.
+    @property
+    def thermalization_time_s(self) -> float:
+        return _read(self._element.reset, "duration")
+
+    @thermalization_time_s.setter
+    def thermalization_time_s(self, value: float) -> None:
+        if not (float(value) > 0):
+            raise ValueError(
+                f"{self.name}: thermalization_time_s={value!r} s must be positive"
+            )
+        _write(self._element.reset, "duration", value)
 
     # ------------------------------------------------------------ absolute power
     # The drive twin, anchored to the stored SATURATION (spec) amplitude
@@ -702,9 +721,67 @@ class QbloxBackend(Backend):
                 pass
         return out
 
+    def _drive_views(self, targets: list[str]) -> dict[str, Any]:
+        """Every run target's DEFAULT drive view, keyed by channel name.
+
+        A composite target (a pair) has no drive channel of its own, so it
+        expands to its MEMBER modes' drive channels — the entities the reset
+        actually happens on. Roster-resolved; never string arithmetic."""
+        from scqo.entities import Composite
+
+        views: dict[str, Any] = {}
+        for target in targets:
+            entity = self._roster.entities.get(target)
+            modes = [target]
+            if isinstance(entity, Composite):
+                modes = [m for names in entity.roles.values() for m in names]
+            for mode in modes:
+                try:
+                    name = self._roster.default_channel(mode, "drive")
+                except Exception:
+                    continue
+                if name not in views:
+                    views[name] = self.device.component(name)
+        return views
+
+    @contextmanager
+    def _thermalization_override(self, experiment: "Experiment"):
+        """Per-run override of the thermal-reset wait: recorded set -> run ->
+        exact revert.
+
+        The STANDING wait already lives in the dut config (scqo pushes the
+        neutral ``thermalization_time_s`` knob onto ``element.reset.duration``),
+        so ``Reset()`` needs no argument and no probe changes. Only an explicit
+        per-run override acts — and unlike QM, where the wait is baked in at
+        program-BUILD time, the scheduler expands ``Reset`` into
+        ``IdlePulse(reset.duration)`` during COMPILATION, which happens inside
+        ``run()``. So this must bracket the whole acquire, not just probe().
+
+        Writes go straight to the vendor tree, NOT through the recording
+        device: a per-run override must leave no ChangeRecord and no store row."""
+        override_ns = getattr(experiment.params, "thermalization_time_ns", None)
+        if override_ns is None:
+            yield
+            return
+        views = self._drive_views(list(experiment.params.targets))
+        if not views:
+            raise RuntimeError(
+                f"thermalization_time_ns={override_ns} was set but no drive "
+                f"channel resolved for targets {list(experiment.params.targets)} "
+                f"— refusing to run with the override silently ignored")
+        previous = {n: v.thermalization_time_s for n, v in views.items()}
+        for view in views.values():
+            view.thermalization_time_s = float(override_ns) / 1e9
+        try:
+            yield
+        finally:
+            for name, view in views.items():
+                view.thermalization_time_s = previous[name]
+
     def acquire(self, experiment: "Experiment") -> xr.Dataset:
-        schedule = experiment.probe()  # native qblox_scheduler.Schedule
-        raw = self._hw_agent.run(schedule, timeout=120)
+        with self._thermalization_override(experiment):
+            schedule = experiment.probe()  # native qblox_scheduler.Schedule
+            raw = self._hw_agent.run(schedule, timeout=120)
         return self._to_canonical(raw, experiment)
 
     @staticmethod
