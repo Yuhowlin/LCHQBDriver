@@ -119,6 +119,13 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   2. The conditional measurement takes `acq_channel=f"cond_{q}"`. On the probe's own
      `S_21_<q>` the schedule still compiles and the bins MERGE (5-point sweep → 10 bins,
      dying later in `_to_canonical`).
+  2b. The settle after the reset is the readout channel's `readout_depletion_s` KNOB
+     (`element.depletion.duration`, a lab addition in `elements.py`), resolved through
+     scqo's `_depletion.depletion_wait_ns` — never a number this driver picks.
+     `resonator_spectroscopy` calibrates it as `depletion_factor / (2π·kappa_tot_hz)`.
+     **NaN (never calibrated) refuses; 0 runs** — "no settle needed" and "nobody
+     measured this resonator" are different claims, which is why the setter bypasses
+     `snap_ns` (it rejects non-positive) for the 0 case.
   3. The discriminator guard does NOT ride on `use_state_discrimination` — active reset
      with averaged I/Q readout is legal, and an uncalibrated `ConditionalReset` compiles
      clean and thresholds every shot against zero.

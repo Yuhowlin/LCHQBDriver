@@ -100,6 +100,19 @@ FIELD_BINDINGS: dict[str, dict[str, VendorBinding]] = {
                  "range stops at the pulse; multiples of 4 ns. QM counterpart: "
                  "zero-padded constant integration weights",
         ),
+        "readout_depletion_s": VendorBinding(
+            path="element.depletion.duration", unit="s",
+            convert="none - absolute seconds on both sides, ROUNDED onto the "
+                    "1 ns scheduler grid (a policy wait derived from a fit, "
+                    "like thermalization_time_s; not refused, or the loop could "
+                    "not write its own result)",
+            note="the post-readout photon-depletion wait. Calibrated by "
+                 "resonator_spectroscopy as depletion_factor / (2 pi x "
+                 "kappa_tot_hz) - the readout twin of thermalization_time_s. "
+                 "The slot is a LAB addition to the element (elements.py "
+                 "DepletionProperties); NaN means never calibrated and active "
+                 "reset refuses it. QM counterpart: q.resonator.depletion_time "
+                 "(ns, 4 ns grid)"),
         "readout_rotation_rad": VendorBinding(
             path="element.measure.acq_rotation", unit="deg",
             convert="RADIANS -> DEGREES (the vendor knob is degrees; the neutral "

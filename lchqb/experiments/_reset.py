@@ -43,12 +43,15 @@ THREE THINGS HERE ARE LOAD-BEARING, each verified against the compiler:
    (3,) ... got (6,)". The helper owns the string so no probe can get it wrong.
    (Do NOT also pass cal19's ``clock=``/``port=``: unnecessary, and hardcoded
    port strings bypass ``_vendor.vendor_element``.)
-2. The settle idle AFTER the reset. The vendor gate gives no way to wait BEFORE
-   the conditional pi — ``TRIGGER_DELAY`` is a fixed 364 ns hardware latency,
-   about 2.3 photon lifetimes at kappa/2pi ~ 1 MHz — so the pi already sees a
-   partly Stark-shifted qubit and that is simply the gate's limitation. What we
-   CAN protect is the experiment's next pulse, which is what QM's
-   ``reset_qubit_active`` spends its trailing ``wait(500)`` on.
+2. The settle idle AFTER the reset, which is the readout channel's calibrated
+   ``readout_depletion_s`` knob (resolved through scqo's ONE precedence helper
+   ``_depletion.depletion_wait_ns``), not a number this file picks. The vendor
+   gate gives no way to wait BEFORE the conditional pi — ``TRIGGER_DELAY`` is a
+   fixed 364 ns hardware latency, about 2.3 photon lifetimes at
+   kappa/2pi ~ 1 MHz — so the pi already sees a partly Stark-shifted qubit and
+   that is simply the gate's limitation. What we CAN protect is the experiment's
+   next pulse, which is what QM's ``reset_qubit_active`` spends its trailing
+   ``wait(500)`` on.
 3. Targets stay SEQUENTIAL. Only one feedback label may be outstanding at a
    time. Today's per-target sub-schedule pattern (``schedule.add(sub)`` with no
    ``ref_op``) satisfies this by construction, so a future "multiplex the reset
@@ -75,6 +78,8 @@ it.
 from __future__ import annotations
 
 from typing import Any
+
+from scqo.experiments._depletion import depletion_wait_ns
 
 from ._state import require_discriminator
 
@@ -134,8 +139,26 @@ def check_reset_method(experiment: Any) -> str:
             f"override."
         )
 
+    # Device reads last, and the discriminator before the settle: without a
+    # discriminator active reset is not a reset at all, whereas a missing settle
+    # is a real but narrower defect. Reporting the deeper problem first keeps a
+    # cold chip from being told to fix the second thing.
     for target in experiment.params.targets:
         require_discriminator(experiment, target, "reset_method='active'")
+    for target in experiment.params.targets:
+        if depletion_wait_ns(experiment, target) is None:
+            raise ValueError(
+                f"{name}: reset_method='active' needs {target}'s "
+                f"readout_depletion_s, and it has never been calibrated. That is "
+                f"the settle between the conditional pi and this experiment's "
+                f"first pulse; without it the readout photons Stark-shift that "
+                f"pulse and the fit drifts in a way nothing attributes to the "
+                f"reset. Run `scqo run resonator_spectroscopy` (it proposes "
+                f"depletion_factor / (2 pi x kappa_tot_hz) from the measured "
+                f"linewidth), review with `scqo accept`, then re-run — or set it "
+                f"directly with `scqo set {target}.readout_depletion_s=...` (0 "
+                f"is legal and means no settle)."
+            )
     return "active"
 
 
@@ -155,7 +178,8 @@ def add_reset(schedule: Any, experiment: Any, target: str) -> None:
     for _ in range(int(experiment.params.active_reset_rounds)):
         # A dedicated acq_channel, NOT the probe's S_21_<q> — see (1) above.
         schedule.add(ConditionalReset(qubit_name=target, acq_channel=f"cond_{target}"))
-    settle_ns = float(experiment.params.active_reset_depletion_ns)
+    # Never None here: check_reset_method refused above if it were.
+    settle_ns = float(depletion_wait_ns(experiment, target))
     if settle_ns:
         # / 1e9, never * 1e-9: the probes' own float-exactness rule, and the
         # scheduler refuses anything off its 1 ns grid.

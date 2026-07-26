@@ -54,17 +54,28 @@ SMALL = {"num_points": 5, "num_averages": 2, "max_amp_factor": 0.5, "num_shots":
 ROTATION_RAD = -0.38962897776554817
 THRESHOLD = -3.25e-4
 
+#: what resonator_spectroscopy would propose for a 1 MHz linewidth at the default
+#: depletion_factor of 5: 5 / (2 pi x 1e6) = 796 ns.
+DEPLETION_S = 795.77e-9
+
 HW_2Q = Path(__file__).resolve().parent / "fixtures" / "hw_config_2q.json"
 
 
-def _calibrate(exp, *targets):
-    """Arm the discriminator the way `scqo accept` would — through the RECORDING
-    device, which is what the guard reads. A direct element write is invisible to
-    it (the recording surface seeds its cache at construction)."""
+def _calibrate(exp, *targets, depletion_s=DEPLETION_S):
+    """Bring the target up the way `scqo accept` would — through the RECORDING
+    device, which is what the guards read. A direct element write is invisible to
+    them (the recording surface seeds its cache at construction).
+
+    Active reset needs BOTH calibrations, from two different experiments: the
+    discriminator (single_shot_readout) to branch on, and the depletion wait
+    (resonator_spectroscopy) to settle for. Pass ``depletion_s=None`` to leave
+    the second one unseeded."""
     for target in targets:
         view = exp.device.channel(target, "readout")
         view.readout_rotation_rad = ROTATION_RAD
         view.readout_threshold = THRESHOLD
+        if depletion_s is not None:
+            view.readout_depletion_s = depletion_s
 
 
 def _experiment(tmp_path, roster, name, *, targets=("q1",), hw_config=None, **params):
@@ -233,32 +244,53 @@ def test_each_round_is_another_conditional_reset(tmp_path, roster, rounds):
     compile_probe(backend, exp)
 
 
-def test_the_settle_idle_is_added_and_can_be_switched_off(tmp_path, roster):
-    """The settle protects the experiment's NEXT pulse from the readout photons
-    (nothing can protect the conditional pi itself — the 364 ns trigger delay is
-    fixed). 0 must stay legal: it is how you turn it off."""
-    def idle_count(tag, **params):
+def test_the_settle_comes_from_the_knob_and_zero_switches_it_off(tmp_path, roster):
+    """The settle is DEVICE STATE (`q1_ro.readout_depletion_s`, proposed by
+    resonator_spectroscopy from the measured linewidth), not a per-run number
+    this backend picks. 0 must stay legal — it is how you turn it off, and it is
+    distinct from 'never calibrated', which refuses."""
+    def idle_count(tag, depletion_s):
         room = tmp_path / tag  # a fresh dir per build: make_backend copies the dut into it
         room.mkdir()
-        backend, exp = _experiment(room, roster,
-                                   "qubit_relaxation", reset_method="active", **params)
-        _calibrate(exp, "q1")
+        backend, exp = _experiment(room, roster, "qubit_relaxation",
+                                   reset_method="active")
+        _calibrate(exp, "q1", depletion_s=depletion_s)
         exp.sweep_axes = exp.define_sweep()
         return _names(exp.probe()).count("IdlePulse")
 
     # the probe already ends each iteration with one IdlePulse of its own
-    assert idle_count("on", active_reset_depletion_ns=1000.0) == idle_count(
-        "off", active_reset_depletion_ns=0.0) + 1
+    assert idle_count("on", DEPLETION_S) == idle_count("off", 0.0) + 1
 
 
-def test_the_settle_idle_is_snapped_to_the_grid(tmp_path, roster):
-    """A fractional nanosecond is refused by the compiler, and this value comes
-    straight from user parameters — the same inlet that produced the off-grid
-    sweep bug (test_time_grid.py)."""
+def test_the_settle_is_snapped_to_the_grid(tmp_path, roster):
+    """A fractional nanosecond is refused by the compiler, and this value is a
+    factor over 1/(2 pi kappa) — never on the grid by luck, exactly like the
+    T1-derived thermal wait."""
     backend, exp = _experiment(tmp_path, roster, "qubit_relaxation",
-                               reset_method="active",
-                               active_reset_depletion_ns=1000.4)
-    _calibrate(exp, "q1")
+                               reset_method="active")
+    _calibrate(exp, "q1", depletion_s=1000.4e-9)
+    compile_probe(backend, exp)
+
+
+def test_active_refuses_an_uncalibrated_depletion(tmp_path, roster):
+    """A discriminator alone is not enough. Refused rather than defaulted,
+    because a silently-missing settle Stark-shifts the first pulse and shows up
+    as a fitted-frequency error nobody attributes to the reset."""
+    backend, exp = _experiment(tmp_path, roster, "qubit_relaxation",
+                               reset_method="active")
+    _calibrate(exp, "q1", depletion_s=None)
+    exp.sweep_axes = exp.define_sweep()
+
+    with pytest.raises(ValueError, match="resonator_spectroscopy"):
+        exp.probe()
+
+
+def test_zero_depletion_is_not_the_same_as_uncalibrated(tmp_path, roster):
+    """The distinction the NaN default exists for: 'I measured this resonator and
+    it needs no settle' must run, while 'nobody has measured it' must refuse."""
+    backend, exp = _experiment(tmp_path, roster, "qubit_relaxation",
+                               reset_method="active")
+    _calibrate(exp, "q1", depletion_s=0.0)
     compile_probe(backend, exp)
 
 

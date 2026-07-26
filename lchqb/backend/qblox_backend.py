@@ -257,6 +257,32 @@ class QbloxReadoutChannel(_QbloxChannelView, make_view_base("readout")):
         self._write_output_att(self._port_clock(), att)
         _write(self._element.measure, "pulse_amp", amp)
 
+    # The photon-depletion wait, on the lab element's own `depletion` submodule
+    # (elements.py) — the scheduler has no slot for it, unlike QM's
+    # resonator.depletion_time. Absolute seconds both sides, so no conversion;
+    # NaN = never calibrated, and it is left as NaN rather than coerced so the
+    # consumers can tell "no wait" from "nobody measured this resonator".
+    @property
+    def readout_depletion_s(self) -> float:
+        return _read(self._element.depletion, "duration")
+
+    @readout_depletion_s.setter
+    def readout_depletion_s(self, value: float) -> None:
+        # ZERO IS LEGAL HERE, unlike every other wait on this backend: it means
+        # "measured, and this resonator needs no settle", which is a different
+        # claim from the NaN default ("nobody has measured it") and the two must
+        # stay distinguishable — active reset runs on the first and refuses the
+        # second. So snap_ns, which refuses non-positive durations, is only
+        # reached for a real wait.
+        if float(value) == 0.0:
+            _write(self._element.depletion, "duration", 0.0)
+            return
+        # ROUNDED like thermalization_time_s, and for the same reason: this is a
+        # policy wait resonator_spectroscopy writes as a factor over 1/(2 pi
+        # kappa), never on the grid by luck.
+        _write(self._element.depletion, "duration",
+               snap_ns(value, f"{self.name}: readout_depletion_s"))
+
     # ---------------------------------------------------- readout discriminator
     # The two knobs `use_state_discrimination` runs on. The compiler reads them off
     # the element (they are `measure` factory kwargs), so a probe only has to ask

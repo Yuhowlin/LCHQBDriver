@@ -5,10 +5,11 @@ custom_elements.py (the read-only reference repo) so LCHQBDriver is
 self-contained at runtime: ``QuantumDevice.from_json_file`` can only deserialize
 a dut config whose ``element_type`` classes are imported (registered) first —
 ``QbloxBackend`` imports this module before loading. This module now deliberately
-EXTENDS the training-repo copy: ``SpectroscopyProperties`` / ``LCHTransmonElement``
-(the ``spec_amp`` slot behind the neutral ``drive_amp`` / ``drive_power_dbm``
-pair) are lab additions with no upstream counterpart; when syncing, diff only the
-vendored ``FluxProperties`` / ``PiHalfProperties`` bodies.
+EXTENDS the training-repo copy: ``SpectroscopyProperties`` (the ``spec_amp`` slot
+behind the neutral ``drive_amp`` / ``drive_power_dbm`` pair),
+``DepletionProperties`` (the neutral ``readout_depletion_s``) and
+``LCHTransmonElement`` are lab additions with no upstream counterpart; when
+syncing, diff only the vendored ``FluxProperties`` / ``PiHalfProperties`` bodies.
 
 NOTE: imports qblox_scheduler — never import this module at package import time
 (only inside backend methods), so ``import lchqb`` stays vendor-free.
@@ -61,14 +62,37 @@ class SpectroscopyProperties(SchedulerSubmodule):
     )
 
 
+class DepletionProperties(SchedulerSubmodule):
+    """Submodule for the resonator photon-depletion wait.
+
+    ``duration`` is the neutral ``readout_depletion_s`` knob: how long to wait
+    after a readout for the photons to leave the resonator before the next pulse
+    sees a Stark-shifted qubit. The scheduler has no slot of its own for this
+    (QM does — ``resonator.depletion_time``), so the lab element carries it,
+    exactly as it carries ``spec_amp``.
+
+    NaN = never calibrated. Run ``scqo run resonator_spectroscopy``, which
+    proposes ``depletion_factor / (2 pi x kappa_tot_hz)`` from the measured
+    linewidth. NaN is the honest default rather than 0 because "no wait" and
+    "nobody has measured this resonator" are different claims, and active reset
+    refuses the second one."""
+
+    duration: float = Parameter(
+        label="Resonator Depletion Wait", unit="s", initial_value=math.nan,
+        vals=Numbers(allow_nan=True)
+    )
+
+
 class LCHTransmonElement(BasicTransmonElement):
     """The lab's base transmon element: BasicTransmonElement + the ``spec``
-    submodule (saturation-drive slot). Fixed-frequency chips use this type
-    directly; flux-tunable ones use the subclass below."""
+    (saturation-drive) and ``depletion`` (post-readout wait) submodules.
+    Fixed-frequency chips use this type directly; flux-tunable ones use the
+    subclass below."""
 
     element_type: Literal["LCHTransmonElement"] = "LCHTransmonElement"
 
     spec: SpectroscopyProperties
+    depletion: DepletionProperties
 
 
 class FluxTunableTransmonElement(LCHTransmonElement):

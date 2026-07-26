@@ -254,8 +254,10 @@ def test_power_amp_loop_order_and_relaxation_param(backend, roster):
     NUMBER -> FREQUENCY block per power point, geometric amplitudes anchored at the
     readout channel's CURRENT readout_amp — the core run() solved the chain for the
     window top before probing) so the dBm axis is UNIFORM, and
-    resonator_relaxation_time_ns sets the between-readout IdlePulse (absent -> the
-    probe's built-in 4 ns)."""
+    the per-run readout_depletion_ns sets the between-readout IdlePulse (absent
+    -> the calibrated readout_depletion_s knob, and absent THAT -> the probe's
+    built-in 4 ns, because punchout is a bring-up sweep that must run on a chip
+    nothing has measured yet)."""
     import numpy as np
 
     from lchqb.experiments.resonator_spectroscopy_power_amp import (
@@ -272,7 +274,7 @@ def test_power_amp_loop_order_and_relaxation_param(backend, roster):
             backend,
             QbloxResonatorSpectroscopyPowerAmp.Parameters(
                 targets=["q1"], num_power_points=5, num_freq_points=3, num_averages=7,
-                resonator_relaxation_time_ns=relax_ns,
+                readout_depletion_ns=relax_ns,
             ),
         )
         exp.device = device

@@ -19,9 +19,11 @@ unrolled ascending — only upward power jumps between slow outer blocks, ring-d
 safe) -> averages (middle) -> frequency (INNER = fastest) — each power point repeats
 a fast frequency sweep ``num_averages`` times; same-coords bins average on the
 cluster across the middle repetition loop. The acquired axis order is
-(power, detuning). ``resonator_relaxation_time_ns`` sets the between-readout
-IdlePulse (ring-down wait). None keeps the probe's built-in 4 ns — likely too short
-for a real resonator (the plain res-spec idles 10 µs): set the parameter on hardware.
+(power, detuning). The between-readout IdlePulse (ring-down wait) is the governed
+depletion wait: the per-run ``readout_depletion_ns`` override, else the readout
+channel's calibrated ``readout_depletion_s`` knob, else the probe's built-in 4 ns
+— which is likely far too short for a real resonator (the plain res-spec idles
+10 µs), so run ``resonator_spectroscopy`` first on a cold chip.
 """
 
 from __future__ import annotations
@@ -32,11 +34,17 @@ import numpy as np
 
 from scqo import register
 from scqo.experiments import ResonatorSpectroscopyPowerAmp
+from scqo.experiments._depletion import depletion_wait_ns
 
 from lchqb.backend.qblox_backend import snap_ns
 
-#: Between-readout idle when resonator_relaxation_time_ns is not given (the probe's
-#: historical value; deliberately unchanged — pass the parameter on real hardware).
+#: Between-readout idle when NOTHING governs the wait — no per-run
+#: readout_depletion_ns and no calibrated readout_depletion_s knob. The probe's
+#: historical value, deliberately unchanged: this is a BRING-UP sweep, often the
+#: first thing run on a cold chip, so it must not require a calibration it is
+#: being run to inform. (Active reset takes the opposite policy and refuses —
+#: see experiments/_reset.py for why the shared helper returns None rather than
+#: raising.)
 _DEFAULT_IDLE_S = 4e-9
 
 
@@ -56,12 +64,15 @@ class QbloxResonatorSpectroscopyPowerAmp(ResonatorSpectroscopyPowerAmp):
         power_dbm = np.asarray(self.sweep_axes["power_dbm"])
         amps_rel = 10.0 ** ((power_dbm - self.params.max_power_dbm) / 20.0)
         reps = self.params.num_averages
-        relax_ns = self.params.resonator_relaxation_time_ns
+        # Per-run override, else the calibrated readout_depletion_s knob, else
+        # the probe's own fallback — resolved by scqo's ONE precedence helper so
+        # this and active reset cannot disagree about what the wait is.
         # snapped onto the scheduler's 1 ns grid (and / 1e9, never * 1e-9, so the
         # float equals the parsed literal): a free user float in ns would
         # otherwise compile into an off-grid IdlePulse and fail with a raw
         # vendor traceback pointing at an absolute timestamp.
-        idle = snap_ns(relax_ns / 1e9, "resonator_relaxation_time_ns") if relax_ns \
+        relax_ns = depletion_wait_ns(self, self.params.targets[0])
+        idle = snap_ns(relax_ns / 1e9, "readout_depletion_ns") if relax_ns \
             else _DEFAULT_IDLE_S
 
         schedule = Schedule("resonator_spectroscopy_power_amp_multiplexed")
