@@ -138,10 +138,10 @@ in the lab venv too:
 ### Testing discipline — here, just run the whole thing
 `uv run pytest tests/ -q` — **88 tests, ~31 s** (plain `uv run` is correct: `scqo` is a hard
 dependency in `pyproject.toml`, so uv's sync keeps it). At this size a selection map would cost
-more attention than it saves; unlike SCQO (473 tests) and scqat (283 / 102 s), the full suite
-IS the targeted run. Run it before every commit.
+more attention than it saves; unlike SCQO (476 tests, ~7 min) and scqat (296 / ~53 s), the full
+suite IS the targeted run. Run it before every commit.
 
-The one narrowing worth knowing: **`test_scqo_glue.py` is ~14 s of the 23 s** — it shells out to
+The one narrowing worth knowing: **`test_scqo_glue.py` is ~14 s of the 31 s** — it shells out to
 the real `scqo` CLI and runs the AI-loop demo end-to-end. While iterating on a probe, loop on
 `uv run pytest tests/test_probe_surface.py tests/test_time_grid.py -q` (30 tests, ~10 s measured —
 per-test time is milliseconds, the cost is fixture + qblox_scheduler import) and pick the glue test
