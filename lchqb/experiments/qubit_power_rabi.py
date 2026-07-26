@@ -11,6 +11,8 @@ from typing import Any
 from scqo import register
 from scqo.experiments import QubitPowerRabi
 
+from lchqb.experiments._state import measure_kwargs
+
 
 @register
 class QbloxQubitPowerRabi(QubitPowerRabi):
@@ -29,6 +31,7 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
             # neutral field on the target's drive CHANNEL (q<n>_xy) -> absolute volts
             pi_amp = self.device.channel(qubit_name, "drive").pi_amp
             amp_abs = amp_factor * pi_amp
+            acq = measure_kwargs(self, qubit_name)  # {} or the thresholded protocol
             sub = Schedule(f"power_rabi_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(linspace(amp_abs[0], amp_abs[-1], amp_abs.size, dtype=DType.AMPLITUDE)) as amp:
@@ -39,6 +42,7 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
                             qubit_name,
                             coords={f"amp_{qubit_name}": amp},
                             acq_channel=f"S_21_{qubit_name}",
+                            **acq,
                         )
                     )
                     sub.add(IdlePulse(4e-9))

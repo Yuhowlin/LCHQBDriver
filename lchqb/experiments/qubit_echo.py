@@ -14,6 +14,8 @@ from typing import Any
 from scqo import register
 from scqo.experiments import QubitEcho
 
+from lchqb.experiments._state import measure_kwargs
+
 
 @register
 class QbloxQubitEcho(QubitEcho):
@@ -29,6 +31,7 @@ class QbloxQubitEcho(QubitEcho):
 
         schedule = Schedule("qubit_echo_multiplexed")
         for qubit_name in self.params.targets:
+            acq = measure_kwargs(self, qubit_name)  # {} or the thresholded protocol
             sub = Schedule(f"echo_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(
@@ -45,6 +48,7 @@ class QbloxQubitEcho(QubitEcho):
                             qubit_name,
                             coords={f"tau_{qubit_name}": tau},
                             acq_channel=f"S_21_{qubit_name}",
+                            **acq,
                         )
                     )
                     sub.add(IdlePulse(4e-9))

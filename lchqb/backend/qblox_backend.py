@@ -99,6 +99,34 @@ def _grid_s(value: float, what: str) -> float:
     return grid / 1e9
 
 
+def snap_ns(value: float, what: str, *, grid_ns: int = 1) -> float:
+    """A positive seconds duration ROUNDED onto the scheduler's time grid.
+
+    The rounding sibling of :func:`_grid_s`. Which one a field gets is a policy
+    choice, already settled per field and mirrored on QM:
+
+    * REFUSE (``_grid_s``) for values a HUMAN sets and a calibration depends on
+      — an off-grid readout pulse would silently de-calibrate the stored
+      amplitude, so it must be rejected loudly.
+    * ROUND (here) for POLICY waits an automated fit produces. A T1-derived
+      reset (``thermalization_factor x t1_s``) is never on the grid by luck, and
+      a sub-nanosecond difference in a ~1 ms wait changes nothing measurable;
+      refusing would make the calibration loop unable to write its own result.
+      LCHQMDriver's ``set_thermalization_time`` already decided this.
+
+    ``qblox_scheduler`` refuses anything off its 1 ns ``GRID_TIME`` (tolerance
+    1.1e-3 ns) at COMPILE time, with a raw vendor traceback pointing at an
+    absolute timestamp rather than at the field that caused it — so snapping
+    here is also what keeps the error surface honest.
+    """
+    ns = float(value) * 1e9
+    if not (ns > 0):
+        raise ValueError(f"{what}={value!r} s: must be positive")
+    snapped = max(grid_ns, round(ns / grid_ns) * grid_ns)
+    # / 1e9, never * 1e-9 — same exact-float reason as _grid_s.
+    return snapped / 1e9
+
+
 class _QbloxChannelView:
     """Shared plumbing of the three channel views.
 
@@ -228,42 +256,70 @@ class QbloxReadoutChannel(_QbloxChannelView, make_view_base("readout")):
         self._write_output_att(self._port_clock(), att)
         _write(self._element.measure, "pulse_amp", amp)
 
-    # ------------------------------------------------------- unrealized knobs
-    # The readout discriminator (rotation/threshold/rus) is Unrealized on Qblox
-    # (fieldmap.UNREALIZED): acq_rotation/acq_threshold exist but no scqo
-    # single_shot_readout calibrates them here yet, and Qblox has no RUS. Concrete
-    # raising pairs required (make_view_base declares an abstract property per knob
-    # of the kind); promote to real acq_rotation/acq_threshold bindings when a
-    # Qblox discriminator experiment lands.
-    _DISCRIMINATOR_UNREALIZED = (
-        "the readout discriminator is Unrealized on the Qblox backend: no "
-        "single_shot_readout wired here yet (acq_rotation/acq_threshold exist; RUS "
-        "has no Qblox counterpart)"
-    )
+    # ---------------------------------------------------- readout discriminator
+    # The two knobs `use_state_discrimination` runs on. The compiler reads them off
+    # the element (they are `measure` factory kwargs), so a probe only has to ask
+    # for acq_protocol="ThresholdedAcquisition" — see experiments/_state.py.
+    #
+    # The vendor knob is DEGREES; the neutral field is RADIANS (QM's
+    # integration_weights_angle is radians, and the catalog names the field
+    # readout_rotation_rad). Converting here, at the one boundary, is what keeps
+    # `scqo set q1_ro.readout_rotation_rad=...` meaning the same thing on both
+    # backends. The threshold needs no conversion — see fieldmap.
+    #: decimals the radian read-back is quantized to. `radians(degrees(x))` is not
+    #: exactly `x`, and RecordingDevice._sync_coupled compares vendor read-back to
+    #: its cached config with EXACT float equality (deliberately — that strictness
+    #: is the staleness guard's rule). Without this, every write to any OTHER
+    #: readout knob emitted a junk `coupled_to` history row differing in the 17th
+    #: digit. 1e-12 rad is ~6e-11 deg, twelve orders below anything the vendor
+    #: resolves; the point is only that read(write(x)) == x.
+    _ROTATION_DECIMALS = 12
 
+    # A rotation is periodic, and the two sides pick DIFFERENT representatives of
+    # the same angle: the sequencer takes degrees in [0, 360] and refuses anything
+    # outside (constants.MIN/MAX_PHASE_ROTATION_ACQ — chipA 2026-07-26 died at
+    # compile time on "-21.712643880286674 ... requires it to be between 0 and
+    # 360"), while the neutral field keeps the mathematical convention (-pi, pi] so
+    # a small correction reads as -0.39 rather than 5.89. Both directions fold, so
+    # any real the caller writes is legal and reads back as its equivalent angle.
     @property
     def readout_rotation_rad(self) -> float:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+        rad = math.radians(float(_read(self._element.measure, "acq_rotation")) % 360.0)
+        if rad > math.pi:
+            rad -= 2.0 * math.pi
+        return round(rad, self._ROTATION_DECIMALS)
 
     @readout_rotation_rad.setter
     def readout_rotation_rad(self, value: float) -> None:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+        deg = math.degrees(round(float(value), self._ROTATION_DECIMALS)) % 360.0
+        _write(self._element.measure, "acq_rotation", deg)
 
     @property
     def readout_threshold(self) -> float:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+        return float(_read(self._element.measure, "acq_threshold"))
 
     @readout_threshold.setter
     def readout_threshold(self, value: float) -> None:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+        _write(self._element.measure, "acq_threshold", float(value))
+
+    # ------------------------------------------------------- unrealized knobs
+    # Repeat-until-success is a QM concept with no Qblox counterpart: there is no
+    # acq_rus knob to write, so this one stays Unrealized (fieldmap.UNREALIZED)
+    # and needs a concrete raising pair (make_view_base declares an abstract
+    # property per knob of the kind).
+    _RUS_UNREALIZED = (
+        "readout_rus_threshold is Unrealized on the Qblox backend: repeat-until-"
+        "success is a QM-only concept and no acq_rus knob exists here (the "
+        "rotation and threshold ARE realized — acq_rotation/acq_threshold)"
+    )
 
     @property
     def readout_rus_threshold(self) -> float:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+        raise NotImplementedError(f"{self.name}: {self._RUS_UNREALIZED}")
 
     @readout_rus_threshold.setter
     def readout_rus_threshold(self, value: float) -> None:
-        raise NotImplementedError(f"{self.name}: {self._DISCRIMINATOR_UNREALIZED}")
+        raise NotImplementedError(f"{self.name}: {self._RUS_UNREALIZED}")
 
 
 class QbloxDriveChannel(_QbloxChannelView, make_view_base("drive")):
@@ -299,6 +355,17 @@ class QbloxDriveChannel(_QbloxChannelView, make_view_base("drive")):
         # pulse/window contract (QM's integration weights); an x180 length is a
         # plain seconds value on both backends, and refusing off-grid ones here
         # would invent a contract the neutral catalog does not state.
+        # The 1 ns SCHEDULER grid is not a contract we invent, though — it is
+        # what this compiler enforces, and a hand-set 32.5 ns pi used to be
+        # accepted here and then crash at compile time with a vendor traceback.
+        # REFUSED rather than rounded (unlike the reset wait): a pi length is a
+        # calibrated quantity whose stored pi_amp was measured against it.
+        if abs(float(value) * 1e9 - round(float(value) * 1e9)) > 1e-3:
+            raise ValueError(
+                f"{self.name}: pi_duration_s={value!r} s is not a whole number "
+                f"of nanoseconds (the qblox_scheduler 1 ns time grid). No "
+                f"silent rounding: the stored pi_amp was calibrated against a "
+                f"specific pulse length")
         _write(self._element.rxy, "duration", value)
 
     # Lives on the element's IdlingReset submodule, not on a drive parameter:
@@ -313,11 +380,12 @@ class QbloxDriveChannel(_QbloxChannelView, make_view_base("drive")):
 
     @thermalization_time_s.setter
     def thermalization_time_s(self, value: float) -> None:
-        if not (float(value) > 0):
-            raise ValueError(
-                f"{self.name}: thermalization_time_s={value!r} s must be positive"
-            )
-        _write(self._element.reset, "duration", value)
+        # ROUNDED to the 1 ns scheduler grid, not refused: this is a policy wait
+        # written by qubit_relaxation as thermalization_factor x t1_s, which is
+        # never on the grid by luck. Writing it raw compiles into an off-grid
+        # IdlePulse that poisons every later timestamp in the schedule.
+        _write(self._element.reset, "duration",
+               snap_ns(value, f"{self.name}: thermalization_time_s"))
 
     # ------------------------------------------------------------ absolute power
     # The drive twin, anchored to the stored SATURATION (spec) amplitude
@@ -786,22 +854,34 @@ class QbloxBackend(Backend):
 
     @staticmethod
     def _to_canonical(raw: xr.Dataset, experiment: "Experiment") -> xr.Dataset:
-        """Relabel a raw Qblox dataset into scqo's convention: dims (target, <sweep>), vars I/Q.
+        """Relabel a raw Qblox dataset into scqo's convention: dims (target, <sweep>),
+        vars I/Q — or the single ``state`` variable when the run was discriminated.
 
         The probes label every acquisition ``acq_channel=f"S_21_{qubit}"`` with the
         sweep loop variable as a per-point coordinate (cal02 reference pattern), so
-        the hardware returns one complex S21 array per qubit over the swept axis
-        (repetitions averaged on the cluster). The canonical sweep values come from
+        the hardware returns one array per qubit over the swept axis (repetitions
+        averaged on the cluster). The canonical sweep values come from
         ``experiment.sweep_axes`` — the probe built its loop from exactly those.
         On a structure mismatch the raw dataset is pickled for offline inspection.
+
+        THRESHOLDED runs (``use_state_discrimination``, experiments/_state.py) come
+        back on the SAME variable but REAL: the FPGA already compared each shot
+        against acq_threshold, so the averaged value is the population. Which mode
+        it was is read off the vendor's own ``acq_protocol`` attribute rather than
+        the parameter — the attribute describes what the hardware actually did and
+        cannot disagree with it. Getting this wrong is silent, not loud: taking
+        ``.real``/``.imag`` of a thresholded result would put the population in
+        ``I``, leave ``Q`` at zero, still satisfy the ``("I","Q")`` contract, and
+        hand scqat a degenerate blob to reduce.
         """
         import numpy as np
 
         qubits = list(experiment.params.targets)  # type: ignore[attr-defined]
         axes = {name: np.asarray(values) for name, values in experiment.sweep_axes.items()}
         shape = tuple(len(v) for v in axes.values())
+        rows: list = []
+        discriminated = False
         try:
-            i_rows, q_rows = [], []
             for name in qubits:
                 key = f"S_21_{name}"
                 if key not in raw.data_vars:
@@ -809,6 +889,7 @@ class QbloxBackend(Backend):
                         f"acquisition channel {key!r} not in raw dataset "
                         f"(data_vars={list(raw.data_vars)}) — probe/hardware mismatch"
                     )
+                discriminated = raw[key].attrs.get("acq_protocol") == "ThresholdedAcquisition"
                 values = np.asarray(raw[key].values).squeeze()
                 if values.shape != shape:
                     if values.ndim == len(shape) and values.shape == tuple(reversed(shape)):
@@ -822,14 +903,22 @@ class QbloxBackend(Backend):
                             f"{key}: expected shape {shape} for axes {list(axes)}, "
                             f"got {values.shape} (dims={dict(raw.sizes)})"
                         )
-                i_rows.append(values.real)
-                q_rows.append(values.imag)
+                rows.append(values)
         except (KeyError, ValueError) as err:
             raise type(err)(f"{err}; {_dump_raw(raw)}") from err
         dims = ("target", *axes.keys())
+        coords = {"target": qubits, **axes}
+        if discriminated:
+            # The compiler substitutes -1 for a NaN threshold result
+            # (compiler.py: `n if not isnan(n) else -1`). Left alone it reads as a
+            # perfectly valid population 100% below the floor; as NaN the fitter
+            # skips the point.
+            state = np.stack(rows).real.astype(float)
+            state[state == -1.0] = np.nan
+            return xr.Dataset({"state": (dims, state)}, coords=coords)
+        stacked = np.stack(rows)
         return xr.Dataset(
-            {"I": (dims, np.stack(i_rows)), "Q": (dims, np.stack(q_rows))},
-            coords={"target": qubits, **axes},
+            {"I": (dims, stacked.real), "Q": (dims, stacked.imag)}, coords=coords
         )
 
 

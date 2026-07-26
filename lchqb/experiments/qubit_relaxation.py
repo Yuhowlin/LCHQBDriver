@@ -12,6 +12,8 @@ from typing import Any
 from scqo import register
 from scqo.experiments import QubitRelaxation
 
+from lchqb.experiments._state import measure_kwargs
+
 
 @register
 class QbloxQubitRelaxation(QubitRelaxation):
@@ -27,6 +29,7 @@ class QbloxQubitRelaxation(QubitRelaxation):
 
         schedule = Schedule("qubit_relaxation_multiplexed")
         for qubit_name in self.params.targets:
+            acq = measure_kwargs(self, qubit_name)  # {} or the thresholded protocol
             sub = Schedule(f"t1_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 with sub.loop(
@@ -39,6 +42,7 @@ class QbloxQubitRelaxation(QubitRelaxation):
                             qubit_name,
                             coords={f"tau_{qubit_name}": tau},
                             acq_channel=f"S_21_{qubit_name}",
+                            **acq,
                         ),
                         rel_time=tau,  # the decay wait: measure tau after the pi pulse
                     )

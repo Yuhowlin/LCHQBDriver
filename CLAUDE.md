@@ -91,6 +91,18 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   `measure.integration_time`: both positive multiples of 4 ns (REFUSED otherwise),
   window ≤ pulse (QM-portability contract — the hardware here would allow more),
   and a pulse shrink clamps the window down with it.
+- `readout_rotation_rad` ↔ `measure.acq_rotation` (**radians ↔ DEGREES**, converted
+  in the view — QM's `integration_weights_angle` is radians, and one `scqo set` must
+  mean the same rotation on both backends) and **FOLDED**: the sequencer takes
+  degrees in [0, 360] and refuses anything outside, while the neutral field keeps
+  (−π, π], so both directions wrap; `readout_threshold` ↔ `measure.acq_threshold`,
+  unconverted (same normalized frame the probes acquire in) and unfolded (its
+  limits are ±1.7e7, which a real threshold never approaches).
+  These two arm `use_state_discrimination` on the four coherent-drive probes:
+  `experiments/_state.py` asks for `acq_protocol="ThresholdedAcquisition"` and the
+  compiler reads the numbers off the element. Vendor default `0.0` = UNCALIBRATED and
+  the probes refuse it by name. `readout_rus_threshold` stays Unrealized (QM-only).
+  Calibrated by `single_shot_readout`, whose Qblox `update()` proposes both.
 - Readout/drive LO = `hw_config.json` `hardware_options.modulation_frequencies`
   (PORT-level, shared by every element on the output; untracked wiring). Hand-edit
   only while NO session is live — `save()` rewrites the file from the in-memory
@@ -124,7 +136,7 @@ in the lab venv too:
 `D:\github\.venv-qblox\Scripts\python.exe -m pytest tests/ -q`.
 
 ### Testing discipline — here, just run the whole thing
-`uv run pytest tests/ -q` — **61 tests, ~23 s** (plain `uv run` is correct: `scqo` is a hard
+`uv run pytest tests/ -q` — **88 tests, ~31 s** (plain `uv run` is correct: `scqo` is a hard
 dependency in `pyproject.toml`, so uv's sync keeps it). At this size a selection map would cost
 more attention than it saves; unlike SCQO (473 tests) and scqat (283 / 102 s), the full suite
 IS the targeted run. Run it before every commit.
@@ -139,6 +151,7 @@ back up before you commit. Below ~10 s there is nothing left to win here; don't 
 |---|---|
 | `test_probe_surface.py` | every registered probe **compiles** its Schedule on the channel-entity surface |
 | `test_time_grid.py` | the specific swept WINDOWS whose naive linspace step was fractional |
+| `test_state_discrimination.py` | `use_state_discrimination`: the two knobs, the thresholded probes, the `state` decode, the single_shot_readout proposal |
 | `test_qblox_power.py` | output-att solves, the hardware-config write surface, dual-file save, `power_context` |
 | `test_qblox_reset.py` | `thermalization_time_s` as a neutral drive-channel knob |
 | `test_readout_duration.py` | duration/window knobs on the readout view (pure stubs, no qblox_scheduler) |

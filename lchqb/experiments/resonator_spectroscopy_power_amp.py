@@ -33,6 +33,8 @@ import numpy as np
 from scqo import register
 from scqo.experiments import ResonatorSpectroscopyPowerAmp
 
+from lchqb.backend.qblox_backend import snap_ns
+
 #: Between-readout idle when resonator_relaxation_time_ns is not given (the probe's
 #: historical value; deliberately unchanged — pass the parameter on real hardware).
 _DEFAULT_IDLE_S = 4e-9
@@ -55,7 +57,12 @@ class QbloxResonatorSpectroscopyPowerAmp(ResonatorSpectroscopyPowerAmp):
         amps_rel = 10.0 ** ((power_dbm - self.params.max_power_dbm) / 20.0)
         reps = self.params.num_averages
         relax_ns = self.params.resonator_relaxation_time_ns
-        idle = (relax_ns * 1e-9) if relax_ns else _DEFAULT_IDLE_S
+        # snapped onto the scheduler's 1 ns grid (and / 1e9, never * 1e-9, so the
+        # float equals the parsed literal): a free user float in ns would
+        # otherwise compile into an off-grid IdlePulse and fail with a raw
+        # vendor traceback pointing at an absolute timestamp.
+        idle = snap_ns(relax_ns / 1e9, "resonator_relaxation_time_ns") if relax_ns \
+            else _DEFAULT_IDLE_S
 
         schedule = Schedule("resonator_spectroscopy_power_amp_multiplexed")
         for qubit_name in self.params.targets:

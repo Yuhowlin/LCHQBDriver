@@ -100,6 +100,32 @@ FIELD_BINDINGS: dict[str, dict[str, VendorBinding]] = {
                  "range stops at the pulse; multiples of 4 ns. QM counterpart: "
                  "zero-padded constant integration weights",
         ),
+        "readout_rotation_rad": VendorBinding(
+            path="element.measure.acq_rotation", unit="deg",
+            convert="RADIANS -> DEGREES (the vendor knob is degrees; the neutral "
+                    "field is radians, matching QM's integration_weights_angle). "
+                    "The ABSOLUTE demod rotation, not a delta: single_shot_readout "
+                    "proposes current - measured_delta - so a direct edit silently "
+                    "de-calibrates it; governed write: "
+                    "scqo set QUBIT.readout_rotation_rad=...",
+            note="acquisition IQ frame, chain-dependent (invalidated by an "
+                 "input-chain change such as readout_input_att); non-portable. "
+                 "Read by the compiler ONLY for acq_protocol='ThresholdedAcquisition' "
+                 "- the use_state_discrimination path",
+        ),
+        "readout_threshold": VendorBinding(
+            path="element.measure.acq_threshold", unit="",
+            convert="none - the threshold is compared against the rotated result in "
+                    "the SAME normalized frame the probes acquire in (the compiler "
+                    "multiplies by integration_length in ns; an SSBIntegrationComplex "
+                    "result is divided by acq_duration), so a threshold solved from "
+                    "acquired I/Q is directly usable. QM counterpart: readout "
+                    "threshold in RAW DEMOD units - a different frame, which is why "
+                    "this field is non-portable",
+            note="the g/e cut use_state_discrimination applies on the FPGA; "
+                 "acquisition-frame, chain-dependent. Vendor default 0.0 means "
+                 "UNCALIBRATED - the probes refuse to discriminate on it",
+        ),
     },
     # The flux CHANNEL is realized (the probes play VoltageOffset on
     # element.ports.flux); its one KNOB is not - see UNREALIZED below. Declared
@@ -120,18 +146,8 @@ UNREALIZED: dict[str, dict[str, Unrealized]] = {
             "experiment lands"),
     },
     "readout": {
-        "readout_rotation_rad": Unrealized(
-            "readout", "readout_rotation_rad",
-            "no single_shot_readout wired for Qblox yet: acq_rotation exists "
-            "(VENDOR_ONLY below, DEGREES) but no scqo experiment proposes it here. "
-            "Promote to a real acq_rotation binding when a Qblox discriminator "
-            "experiment lands"),
-        "readout_threshold": Unrealized(
-            "readout", "readout_threshold",
-            "no single_shot_readout wired for Qblox yet: acq_threshold exists "
-            "(VENDOR_ONLY below) but no scqo experiment proposes it here. Promote "
-            "to a real acq_threshold binding when a Qblox discriminator experiment "
-            "lands"),
+        # rotation + threshold are REALIZED above (acq_rotation/acq_threshold);
+        # only the RUS exit has no Qblox counterpart.
         "readout_rus_threshold": Unrealized(
             "readout", "readout_rus_threshold",
             "no repeat-until-success on Qblox: no acq_rus knob exists (QM-only "
@@ -217,21 +233,11 @@ VENDOR_ONLY: dict[str, VendorOnly] = {
     # Qblox for now (see UNREALIZED above) - element.rxy.beta is the vendor knob
     # that WOULD realize it; the binding lands when a Qblox DRAG experiment is
     # written. Kept out of VENDOR_ONLY to avoid colliding with the tracked name.
-    "acq_threshold": VendorOnly(
-        path="element.measure.acq_threshold", unit="", kind="realizer",
-        doc="single-shot discrimination threshold in the rotated acquisition IQ "
-            "frame - WOULD realize the tracked readout_threshold (Unrealized above "
-            "until a Qblox single_shot_readout lands; then a real binding). "
-            "Chain-dependent (input-chain gains + cable phase); invalidated by "
-            "readout_input_att/input_gain edits. QM counterpart: readout threshold "
-            "(demod units - different frame)"),
-    "acq_rotation": VendorOnly(
-        path="element.measure.acq_rotation", unit="deg", kind="realizer",
-        doc="IQ rotation before thresholding (DEGREES here; QM "
-            "integration_weights_angle is RADIANS) - WOULD realize the tracked "
-            "readout_rotation_rad (Unrealized above until a Qblox "
-            "single_shot_readout lands; the binding converts rad->deg). "
-            "Acquisition-frame, chain-dependent; invalidated by input-chain edits"),
+    # NOTE: acq_threshold / acq_rotation are no longer VENDOR_ONLY - they REALIZE
+    # the tracked readout_threshold / readout_rotation_rad (bindings above). A
+    # direct edit silently de-calibrates the discriminator; the governed writes are
+    # scqo set QUBIT.readout_threshold=... / .readout_rotation_rad=..., or a
+    # single_shot_readout run + scqo accept.
     "readout_input_att": VendorOnly(
         path='hardware_options.input_att["<ro-port>-<qubit>.ro"]',
         unit="dB", kind="vendor",
