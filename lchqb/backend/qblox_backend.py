@@ -893,7 +893,16 @@ class QbloxBackend(Backend):
         check_reset_method(experiment)
         with self._thermalization_override(experiment):
             schedule = experiment.probe()  # native qblox_scheduler.Schedule
-            raw = self._hw_agent.run(schedule, timeout=120)
+            try:
+                raw = self._hw_agent.run(schedule, timeout=120)
+            finally:
+                # The clusters only exist once run() has connected them, and the loops
+                # this quiets are the ones qblox_instruments leaves open until
+                # interpreter shutdown — so install here, and in `finally` so a run
+                # that raises still gets it. Idempotent; see _asyncio_noise.
+                from lchqb.backend._asyncio_noise import silence_proactor_self_pipe_noise
+
+                silence_proactor_self_pipe_noise(self._hw_agent)
         return self._to_canonical(raw, experiment)
 
     @staticmethod

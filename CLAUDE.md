@@ -181,6 +181,18 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   port-clocks that declare them (defaults are `None`), and never resets the module. Adding
   such a block overwrites the AMC on the next upload — then use the scheduler's own
   `auto_lo_cal` / `auto_sideband_cal` instead of this script.
+- **The Windows shutdown traceback belongs to us, not to scqo.** Every `scqo run` used to end
+  with `OSError: [WinError 87]` / "Error on reading from the event loop self pipe" AFTER
+  `saved:` — qblox's `Transport.__init__` makes a bare `ProactorEventLoop` per transport when
+  no loop is running and never closes it, and asyncio reports the dead self-pipe through
+  `call_exception_handler`. `backend/_asyncio_noise.py` installs a narrow handler (that one
+  message + `OSError` + winerror 87) on each cluster's transport loop; `acquire()` calls it in
+  a `finally`, since the loops exist only once `HardwareAgent.run` has connected and a run
+  that RAISES has opened them too. Slot transports share the cluster's loop
+  (`loop_from=self._transport`), so it is one loop per Cluster. The fix lives HERE, not in
+  SCQO's CLI: that CLI is vendor-neutral, and an `os._exit` there would skip dataset flushes
+  for every backend. Closing the loop at `atexit` was rejected too — `atexit` is LIFO and
+  qcodes registers its own instrument-closing hooks.
 - Placement rule (which store owns which value): `scqo state --rule` / SCQO TUTORIAL §10.
   A vendor copy of a neutral/physical value is legal only as a CACHE with a named
   refresh trigger — the SCQO stores are truth.
@@ -209,7 +221,7 @@ in the lab venv too:
 `D:\github\.venv-qblox\Scripts\python.exe -m pytest tests/ -q`.
 
 ### Testing discipline — here, just run the whole thing
-`uv run pytest tests/ -q` — **170 tests, ~55 s** (plain `uv run` is correct: `scqo` is a hard
+`uv run pytest tests/ -q` — **178 tests, ~58 s** (plain `uv run` is correct: `scqo` is a hard
 dependency in `pyproject.toml`, so uv's sync keeps it). At this size a selection map would cost
 more attention than it saves; unlike SCQO (476 tests, ~7 min) and scqat (296 / ~53 s), the full
 suite IS the targeted run. Run it before every commit.
@@ -231,4 +243,5 @@ back up before you commit. Below ~10 s there is nothing left to win here; don't 
 | `test_readout_duration.py` | duration/window knobs on the readout view (pure stubs, no qblox_scheduler) |
 | `test_hw_config_serialization.py` | explicit nulls never written or trusted |
 | `test_mixer_calibration.py` | `scripts/calibrate_mixers.py`: the pure plan (config -> LO/NCO groups) + the AMC control flow on a `dummy_cfg` cluster (channel map, tone, sequencer snapshot/restart, cache) |
+| `test_asyncio_noise.py` | the WinError-87 shutdown suppressor: what it swallows, what it must NOT, idempotence, and that `acquire()` installs it even when the run raises |
 | `test_scqo_glue.py` | the `scqo` CLI works in THIS venv + the qblox factory (slow — see above) |
