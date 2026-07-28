@@ -157,6 +157,23 @@ UNREALIZED: dict[str, dict[str, Unrealized]] = {
             "below) but no scqo experiment writes it here (the drag experiments are "
             "QM-only). Promote to a real rxy.beta binding when a Qblox DRAG "
             "experiment lands"),
+        "drag_beta_x90": Unrealized(
+            "drive", "drag_beta_x90",
+            "same gap as drag_beta one line up, and they promote together: rxy has a "
+            "single beta, so an independent pi/2 DRAG would need a lab element field "
+            "besides. Both land when a Qblox DRAG experiment does"),
+        "pi_amp_x90": Unrealized(
+            "drive", "pi_amp_x90",
+            "the slot EXISTS -- PiHalfProperties.amp90 in lchqb/elements.py -- but no "
+            "Qblox probe writes it: qubit_deterministic_benchmarking is QM-only, as "
+            "is the rest of that family (pi_pulse_error, sqrb, tomography, the drag "
+            "and flux-coherence pairs). Binding an amplitude nothing calibrates would "
+            "claim a calibration this backend cannot make, so it is DECLINED until a "
+            "Qblox probe lands. Promoting it then means moving pi_half from "
+            "FluxTunableTransmonElement up to the LCHTransmonElement base (fixed-"
+            "frequency chips need it too) and binding element.pi_half.amp90. Qblox "
+            "otherwise DERIVES X90 from rxy.amp180 as amp180*theta/180, so today "
+            "pi_amp alone governs both gate widths here"),
     },
     "readout": {
         # rotation + threshold are REALIZED above (acq_rotation/acq_threshold);

@@ -480,6 +480,33 @@ class QbloxDriveChannel(_QbloxChannelView, make_view_base("drive")):
     def drag_beta(self, value: float) -> None:
         raise NotImplementedError(f"{self.name}: {self._DRAG_BETA_UNREALIZED}")
 
+    # The pi/2 pair. Qblox DERIVES X90 from rxy.amp180 (amp180*theta/180), so
+    # pi_amp alone governs both gate widths here; the independent slot exists
+    # (PiHalfProperties.amp90) but no Qblox probe calibrates it, so binding it
+    # would claim a calibration this backend cannot make. See fieldmap.UNREALIZED
+    # for the promotion condition.
+    _X90_UNREALIZED = (
+        "the pi/2 gate has no independently calibrated knob on the Qblox backend: "
+        "X90 is derived from rxy.amp180, and qubit_deterministic_benchmarking (which "
+        "calibrates it in its own right) is QM-only. Set pi_amp instead"
+    )
+
+    @property
+    def pi_amp_x90(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._X90_UNREALIZED}")
+
+    @pi_amp_x90.setter
+    def pi_amp_x90(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._X90_UNREALIZED}")
+
+    @property
+    def drag_beta_x90(self) -> float:
+        raise NotImplementedError(f"{self.name}: {self._X90_UNREALIZED}")
+
+    @drag_beta_x90.setter
+    def drag_beta_x90(self, value: float) -> None:
+        raise NotImplementedError(f"{self.name}: {self._X90_UNREALIZED}")
+
 
 class QbloxFluxChannel(_QbloxChannelView, make_view_base("flux")):
     """The scqo FLUX channel view (``q1_z``) over the target's ``DeviceElement``.
