@@ -41,7 +41,8 @@ lchqb/scqo_backend.py            # the `scqo.backends` entry-point factory
                                  #   loud SystemExit when missing) and threads the device
                                  #   ROSTER into the backend (entity-name resolution needs
                                  #   it); vendor imports stay lazy
-scripts/                         # check_real_config.py + ai_loop_demo.py (a worked Session example)
+scripts/                         # check_real_config.py + ai_loop_demo.py (a worked Session
+                                 #   example) + calibrate_mixers.py/.ipynb (see below)
 ```
 Students use the **`scqo` command** and edit **nothing** here: select a setup
 (`scqo user --device <name> [--setup <name>]`) and run. With no config everything runs
@@ -141,6 +142,57 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   only while NO session is live — `save()` rewrites the file from the in-memory
   config and would silently revert the edit — and restart notebook kernels after.
   `power_context` stamps the readout LO into every run record.
+- **Mixer calibration** (`scripts/calibrate_mixers.py`, notebook wrapper alongside) is an
+  OPERATIONS tool, not part of the scqo surface: it drives the RF modules' built-in AMC
+  straight through `qblox_instruments`, so no session/HardwareAgent may hold the cluster
+  while it runs. It reads the config folder — connectivity graph for port -> (slot, output),
+  `modulation_frequencies` for the LO, `dut_config` clocks for `NCO = clock_freq - lo_freq`.
+  **`sideband_cal()` fails silently and non-deterministically.** It returns having changed
+  nothing while the firmware reports success, on roughly half to three-quarters of calls
+  (chipA 2026-07-27). You cannot lean on the LO cal to notice: LO leakage is DC mixer
+  feedthrough, so `out{k}_lo_cal()` yields plausible offsets *with no tone playing at all*.
+  When the sideband cal does land the value is solid, so the TRIGGERING is unreliable, not
+  the measurement. Hence the design — **verify, then retry**, never "trust a condition":
+  a result still on the vendor defaults is a `no-op` that is never cached and exits
+  non-zero; a CACHED entry on the defaults is treated as a miss, so one bad run cannot
+  poison the file; the check is TOLERANCE-based, not `==` (a failed cal can null out to
+  1.000031); and `--attempts` (default 12) retries until the values move. That knob is the
+  reliability lever — 5 was not enough. Attempt counts go to `mixer_cal.json` `history`;
+  a rising trend is the number for a Qblox support ticket.
+  Do NOT infer a cause from a single pass/fail. Attenuation, `clear_sequencer_flags()`, cal
+  ordering, the `mixer_corr_*` write and the QRM-RF acquisition connection were each
+  "confirmed" from one A/B and each later contradicted. They remain in the code because
+  they are harmless and match the Qblox tutorial, but they are UNPROVEN. `--diagnose`
+  re-runs the five-trial matrix on one port-clock when a chip misbehaves.
+  **The process must not linger** (this one IS established): `close_cluster()` bounds
+  `Cluster.close()` with a watchdog and `_hard_exit()` ends it with `os._exit`, because a
+  "finished" run that never exits keeps four sockets on the cluster, and that contention
+  degrades every later run — eleven such zombies once produced garbled SCPI reads
+  (`int('')` at connect).
+  LO cal is per OUTPUT (`out{k}_offset_path0/1`, module state); sideband cal is per
+  SEQUENCER (`mixer_corr_gain_ratio` / `mixer_corr_phase_offset_degree`) and must run on the
+  index the compiler will allocate — lowest free sequencer per module, port-clocks in config
+  order (seq0 for one port-clock per module; override on a multiplexed module). Results live
+  only in VOLATILE cluster state, so `<config_dir>/mixer_cal.json` caches them keyed by
+  `(slot, output, lo_freq)` / `(slot, sequencer, nco_freq)` and validates against the LIVE
+  values — a reboot reads as a miss, never as a skip.
+  **It survives a run only because hw_config has no `hardware_options.mixer_corrections`
+  block**: the instrument coordinator pushes `mixer_corr_*` / `out{k}_offset_path*` only for
+  port-clocks that declare them (defaults are `None`), and never resets the module. Adding
+  such a block overwrites the AMC on the next upload — then use the scheduler's own
+  `auto_lo_cal` / `auto_sideband_cal` instead of this script.
+- **The Windows shutdown traceback belongs to us, not to scqo.** Every `scqo run` used to end
+  with `OSError: [WinError 87]` / "Error on reading from the event loop self pipe" AFTER
+  `saved:` — qblox's `Transport.__init__` makes a bare `ProactorEventLoop` per transport when
+  no loop is running and never closes it, and asyncio reports the dead self-pipe through
+  `call_exception_handler`. `backend/_asyncio_noise.py` installs a narrow handler (that one
+  message + `OSError` + winerror 87) on each cluster's transport loop; `acquire()` calls it in
+  a `finally`, since the loops exist only once `HardwareAgent.run` has connected and a run
+  that RAISES has opened them too. Slot transports share the cluster's loop
+  (`loop_from=self._transport`), so it is one loop per Cluster. The fix lives HERE, not in
+  SCQO's CLI: that CLI is vendor-neutral, and an `os._exit` there would skip dataset flushes
+  for every backend. Closing the loop at `atexit` was rejected too — `atexit` is LIFO and
+  qcodes registers its own instrument-closing hooks.
 - Placement rule (which store owns which value): `scqo state --rule` / SCQO TUTORIAL §10.
   A vendor copy of a neutral/physical value is legal only as a CACHE with a named
   refresh trigger — the SCQO stores are truth.
@@ -169,7 +221,7 @@ in the lab venv too:
 `D:\github\.venv-qblox\Scripts\python.exe -m pytest tests/ -q`.
 
 ### Testing discipline — here, just run the whole thing
-`uv run pytest tests/ -q` — **122 tests, ~34 s** (plain `uv run` is correct: `scqo` is a hard
+`uv run pytest tests/ -q` — **178 tests, ~58 s** (plain `uv run` is correct: `scqo` is a hard
 dependency in `pyproject.toml`, so uv's sync keeps it). At this size a selection map would cost
 more attention than it saves; unlike SCQO (476 tests, ~7 min) and scqat (296 / ~53 s), the full
 suite IS the targeted run. Run it before every commit.
@@ -190,4 +242,6 @@ back up before you commit. Below ~10 s there is nothing left to win here; don't 
 | `test_qblox_reset.py` | `thermalization_time_s` as a neutral drive-channel knob |
 | `test_readout_duration.py` | duration/window knobs on the readout view (pure stubs, no qblox_scheduler) |
 | `test_hw_config_serialization.py` | explicit nulls never written or trusted |
+| `test_mixer_calibration.py` | `scripts/calibrate_mixers.py`: the pure plan (config -> LO/NCO groups) + the AMC control flow on a `dummy_cfg` cluster (channel map, tone, sequencer snapshot/restart, cache) |
+| `test_asyncio_noise.py` | the WinError-87 shutdown suppressor: what it swallows, what it must NOT, idempotence, and that `acquire()` installs it even when the run raises |
 | `test_scqo_glue.py` | the `scqo` CLI works in THIS venv + the qblox factory (slow — see above) |

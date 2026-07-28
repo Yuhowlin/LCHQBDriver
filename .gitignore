@@ -20,6 +20,12 @@ env/
 qblox_state/*.json
 data/
 
+# qblox's DUMMY transport assembles Q1ASM through a temp file in the CWD
+# (qblox_instruments/ieee488_2/module_dummy_transport.py), so any test run or
+# `--dummy` calibration in the repo root drops these.
+tmp.q1asm
+tmp.hex
+
 # Editor / OS
 .vscode/
 .idea/
