@@ -86,8 +86,25 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   embedded `hardware_config` copy is synced first so they cannot diverge.
 - `readout_power_dbm` ↔ readout `output_att` + `measure.pulse_amp`;
   `drive_power_dbm` ↔ drive-port `output_att` + `element.spec.spec_amp`
-  (`output_att` takes EVEN integers 0–60 dB; both solves keep the amplitude
-  ≤ 0.5, the amplitude carries the exact residual).
+  (`output_att` takes EVEN integers; both solves keep the amplitude ≤ 0.5, the
+  amplitude carries the exact residual).
+- **The attenuator's CEILING is per module output, and only the instrument knows
+  it.** qblox_instruments builds the `out<k>_att` validator from a live SCPI
+  query (`_get_max_out_att`), so it is neither a constant nor a function of the
+  module type: chipA runs a 60 dB QRM-RF (slot 8, ISA 2.0) beside a **30 dB**
+  QCM-RF (slot 4, ISA 2.1). A hardcoded 0–60 killed a run on 2026-07-29 (`38 is
+  invalid: must be between 0 and 30 inclusive`). Since nothing connects until a
+  run, `_solve_att` stays optimistic (`_DEFAULT_MAX_OUTPUT_ATT`) and
+  `acquire()`'s `_sync_att_limits` corrects before `probe()`: it asks the cluster
+  only about chains solved above `_UNIVERSALLY_SAFE_ATT` (20 dB, the QRC's worst
+  case — below that no output can refuse, and asking would put a network call in
+  the offline tests), then RE-SOLVES an over-solved chain by writing its current
+  `*_power_dbm` back. That correction is power-preserving by construction (the
+  amplitude takes up what the attenuator cannot) and costs only DAC range, which
+  is why clamping is right and refusing would not be. What it learns lands in
+  `<config_dir>/att_limits.json`, keyed physically by `slot<N>/out<K>` so
+  rewiring a port cannot inherit a stale ceiling, and is loaded at construction
+  so the next process solves right the first time.
 - `readout_duration_s` ↔ `measure.pulse_duration`, `readout_integration_s` ↔
   `measure.integration_time`: both positive multiples of 4 ns (REFUSED otherwise),
   window ≤ pulse (QM-portability contract — the hardware here would allow more),
@@ -221,7 +238,7 @@ in the lab venv too:
 `D:\github\.venv-qblox\Scripts\python.exe -m pytest tests/ -q`.
 
 ### Testing discipline — here, just run the whole thing
-`uv run pytest tests/ -q` — **178 tests, ~58 s** (plain `uv run` is correct: `scqo` is a hard
+`uv run pytest tests/ -q` — **196 tests, ~53 s** (plain `uv run` is correct: `scqo` is a hard
 dependency in `pyproject.toml`, so uv's sync keeps it). At this size a selection map would cost
 more attention than it saves; unlike SCQO (476 tests, ~7 min) and scqat (296 / ~53 s), the full
 suite IS the targeted run. Run it before every commit.
@@ -239,6 +256,8 @@ back up before you commit. Below ~10 s there is nothing left to win here; don't 
 | `test_state_discrimination.py` | `use_state_discrimination`: the two knobs, the thresholded probes, the `state` decode, the single_shot_readout proposal |
 | `test_active_reset.py` | `reset_method="active"`: the opt-in census, the four refusals, the acq-channel rule, rounds/settle, the sequential-feedback rule (needs `fixtures/hw_config_2q.json`) |
 | `test_qblox_power.py` | output-att solves, the hardware-config write surface, dual-file save, `power_context` |
+| `test_att_limits.py` | the per-module attenuator ceiling: clamp-not-refuse, when the cluster is asked and when it must NOT be, the power-preserving re-solve, the sidecar |
+| `test_overlap_timing.py` | `qubit_spectroscopy_overlap`: the two tones co-start and the ADC opens `acq_start_ns` later — asserted on the COMPILED tree with accumulated absolute times |
 | `test_qblox_reset.py` | `thermalization_time_s` as a neutral drive-channel knob |
 | `test_readout_duration.py` | duration/window knobs on the readout view (pure stubs, no qblox_scheduler) |
 | `test_hw_config_serialization.py` | explicit nulls never written or trusted |
