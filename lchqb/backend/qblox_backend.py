@@ -43,20 +43,44 @@ QBLOX_NOMINAL_FULL_SCALE_DBM = 5.0
 #: The canonical digital operating point: keep the pulse amplitude <= 0.5 full
 #: scale (shared by the readout AND drive chain solves).
 _CANONICAL_MAX_AMP = 0.5
+#: What to assume for a port whose module has never been asked. The maximum
+#: output attenuation is NOT a constant of the product line — qblox_instruments
+#: builds the ``out<k>_att`` validator from a live SCPI query
+#: (``_get_max_out_att``), and chipA has a 60 dB QRM-RF (slot 8, ISA 2.0) beside
+#: a 30 dB QCM-RF (slot 4, ISA 2.1). 60 keeps the full dynamic range on the
+#: modules that have it; a port that turns out to be narrower is corrected the
+#: first time a run connects (see ``QbloxBackend._sync_att_limits``) and
+#: remembered in ``att_limits.json`` from then on.
+_DEFAULT_MAX_OUTPUT_ATT = 60
+#: An attenuation no Qblox RF output refuses, so one solved at or below it needs
+#: no hardware question at all. The narrowest attenuator in the range is the
+#: QRC's, whose ceiling moves with the centre frequency and bottoms out at
+#: 20.5 dB (qblox_instruments' own out<k>_att docstring).
+_UNIVERSALLY_SAFE_ATT = 20
+#: Sidecar holding the discovered per-output maxima, beside mixer_cal.json.
+ATT_LIMITS_FILE = "att_limits.json"
 
 
-def _solve_att(name: str, target: float, what: str) -> tuple[int, float]:
+def _solve_att(name: str, target: float, what: str,
+               max_att: int = _DEFAULT_MAX_OUTPUT_ATT) -> tuple[int, float]:
     """Solve an output chain for an absolute port power: the largest EVEN
-    attenuation in [0, 60] keeping the amplitude <= 0.5 (the module validator is
-    Multiples(2), 0..60 — an odd value would only fail later, at instrument
-    prepare); the amplitude absorbs the exact residual."""
+    attenuation in ``[0, max_att]`` keeping the amplitude <= 0.5 (the module
+    validator is Multiples(2) — an odd value would only fail later, at instrument
+    prepare); the amplitude absorbs the exact residual.
+
+    ``max_att`` is a property of the individual module output, not of the driver
+    (see ``_DEFAULT_MAX_OUTPUT_ATT``). Lowering it never changes the power that
+    reaches the port — the amplitude takes over what the attenuator cannot — it
+    only costs DAC resolution, which is why clamping is the right response to a
+    narrower attenuator and refusing would not be.
+    """
     if target > QBLOX_NOMINAL_FULL_SCALE_DBM:
         raise ValueError(
             f"{name}: target {target} dBm exceeds the chain maximum "
             f"(+{QBLOX_NOMINAL_FULL_SCALE_DBM} dBm at amplitude 1, output_att=0)"
         )
     att_max = QBLOX_NOMINAL_FULL_SCALE_DBM - target + 20.0 * math.log10(_CANONICAL_MAX_AMP)
-    att = int(min(60, max(0, 2 * math.floor(att_max / 2.0))))
+    att = int(min(int(max_att), max(0, 2 * math.floor(att_max / 2.0))))
     amp = 10.0 ** ((target - QBLOX_NOMINAL_FULL_SCALE_DBM + att) / 20.0)
     if amp > _CANONICAL_MAX_AMP:  # only when att=0 cannot absorb it (target > ~-1 dBm)
         warnings.warn(
@@ -65,6 +89,81 @@ def _solve_att(name: str, target: float, what: str) -> tuple[int, float]:
             f"operating point"
         )
     return att, amp
+
+
+def _port_outputs(hw_config: Any) -> dict[str, tuple[str, int, int]]:
+    """``port -> (cluster, slot, complex-output index)`` from the connectivity graph.
+
+    The physical identity of an output is what an attenuation limit belongs to,
+    and the graph is the only place the config states it. (``scripts/
+    calibrate_mixers.py`` parses the same edges for the same reason; it works off
+    the raw JSON, this off the validated model, and neither may import the other
+    — a backend must not depend on an operations script.)
+    """
+    # The validated model carries a networkx Graph, whose plain iteration yields
+    # NODES; only `.edges` gives the pairs. A raw dict-loaded config is already a
+    # list of pairs, so accept both rather than depending on which one a caller has.
+    graph = getattr(getattr(hw_config, "connectivity", None), "graph", None)
+    edges = getattr(graph, "edges", None) if graph is not None else None
+    if edges is None:
+        edges = graph or []
+    found: dict[str, tuple[str, int, int]] = {}
+    for edge in edges:
+        try:
+            a, b = edge
+        except (TypeError, ValueError):
+            continue
+        for node, other in ((a, b), (b, a)):
+            parts = str(node).split(".")
+            if len(parts) != 3 or not parts[1].startswith("module"):
+                continue
+            cluster, module, channel = parts
+            if not channel.startswith("complex_output_"):
+                continue
+            try:
+                slot = int(module[len("module"):])
+                output = int(channel.rsplit("_", 1)[1])
+            except ValueError:
+                continue
+            found[str(other)] = (cluster, slot, output)
+    return found
+
+
+def _module_max_att(module: Any, output: int) -> int | None:
+    """One module output's maximum attenuation in dB, or None if unknowable.
+
+    Two shapes: QCM/QRM build a ``Multiples(2, 0, max)`` validator from the live
+    query at construction, so the ceiling is readable off the parameter; QRC
+    validates only the 0.5 dB step and exposes ``get_max_out<k>_att()`` because
+    its ceiling moves with the centre frequency. Floored to an even integer
+    either way — this driver's solve emits even dB.
+    """
+    getter = getattr(module, f"get_max_out{output}_att", None)
+    if callable(getter):
+        try:
+            return int(2 * math.floor(float(getter()) / 2.0))
+        except Exception:  # noqa: BLE001 - an unreachable module is "unknowable"
+            return None
+    param = getattr(module, f"out{output}_att", None)
+    ceiling = getattr(getattr(param, "vals", None), "max_value", None)
+    if ceiling is None:
+        return None
+    return int(2 * math.floor(float(ceiling) / 2.0))
+
+
+def _att_limits(hw_agent: Any) -> dict[str, int]:
+    """This driver's per-port-clock max-attenuation cache, carried on the agent.
+
+    An annotation on the vendor object rather than driver state, because the
+    channel VIEWS need it at solve time and the only thing they hold is the
+    agent. Keyed by port-clock (what the solve has in hand); the sidecar on disk
+    is keyed physically, by slot/output.
+    """
+    limits = getattr(hw_agent, "_lchqb_att_limits", None)
+    if limits is None:
+        limits = {}
+        hw_agent._lchqb_att_limits = limits
+    return limits
 
 
 def _read(owner: Any, name: str) -> float:
@@ -175,6 +274,16 @@ class _QbloxChannelView:
             opts.output_att = {}
         opts.output_att[port_clock] = att  # authoritative: recompiled+pushed each run
 
+    def _max_output_att(self, port_clock: str) -> int:
+        """This line's attenuator ceiling in dB — a property of the physical
+        module output, learned from the instrument and cached (see
+        ``_DEFAULT_MAX_OUTPUT_ATT``). Solving against the default on a narrower
+        port is not silently wrong: the run that follows corrects it before
+        anything is pushed."""
+        if self._hw_agent is None:
+            return _DEFAULT_MAX_OUTPUT_ATT
+        return int(_att_limits(self._hw_agent).get(port_clock, _DEFAULT_MAX_OUTPUT_ATT))
+
 
 class QbloxReadoutChannel(_QbloxChannelView, make_view_base("readout")):
     """The scqo READOUT channel view (``q1_ro``) over the target's ``DeviceElement``.
@@ -253,8 +362,10 @@ class QbloxReadoutChannel(_QbloxChannelView, make_view_base("readout")):
 
     @readout_power_dbm.setter
     def readout_power_dbm(self, value: float) -> None:
-        att, amp = _solve_att(self.name, float(value), "pulse_amp")
-        self._write_output_att(self._port_clock(), att)
+        port_clock = self._port_clock()
+        att, amp = _solve_att(self.name, float(value), "pulse_amp",
+                              self._max_output_att(port_clock))
+        self._write_output_att(port_clock, att)
         _write(self._element.measure, "pulse_amp", amp)
 
     # The photon-depletion wait, on the lab element's own `depletion` submodule
@@ -459,8 +570,10 @@ class QbloxDriveChannel(_QbloxChannelView, make_view_base("drive")):
 
     @drive_power_dbm.setter
     def drive_power_dbm(self, value: float) -> None:
-        att, amp = _solve_att(self.name, float(value), "spec_amp")
-        self._write_output_att(self._drive_port_clock(), att)
+        port_clock = self._drive_port_clock()
+        att, amp = _solve_att(self.name, float(value), "spec_amp",
+                              self._max_output_att(port_clock))
+        self._write_output_att(port_clock, att)
         _write(self._element.spec, "spec_amp", amp)
 
     # ------------------------------------------------------- unrealized knobs
@@ -748,6 +861,7 @@ class QbloxBackend(Backend):
         self._hw_agent._hardware_configuration = QbloxHardwareCompilationConfig.model_validate(
             _json.loads(validated.model_dump_json(exclude_none=True))
         )
+        self._hw_config_file = hardware_config
         self._device = QbloxDeviceModel(
             self._hw_agent.quantum_device,
             roster,
@@ -755,6 +869,9 @@ class QbloxBackend(Backend):
             hw_agent=self._hw_agent,
             hw_config_file=hardware_config,
         )
+        # Attenuator ceilings learned by an earlier run, so the very first solve
+        # of this process is already right (see _sync_att_limits).
+        self._load_att_limits()
 
     @classmethod
     def load(cls, config_dir: str = "./qblox_state", output_dir: str | None = None,
@@ -909,6 +1026,160 @@ class QbloxBackend(Backend):
             for name, view in views.items():
                 view.thermalization_time_s = previous[name]
 
+    # ------------------------------------------------- output-attenuator limits
+    @property
+    def _att_limits_path(self) -> Path | None:
+        """The sidecar beside hw_config.json (mixer_cal.json's neighbour)."""
+        if self._hw_config_file is None:
+            return None
+        return Path(self._hw_config_file).parent / ATT_LIMITS_FILE
+
+    def _load_att_limits(self) -> None:
+        """Seed the port-clock cache from the sidecar, if one was written before.
+
+        Physical keys on disk (``slot4/out0``), port-clock keys in memory: the
+        limit belongs to the module output, but the solve only ever has a
+        port-clock, and rewiring must not carry a stale ceiling to a new port.
+        """
+        path = self._att_limits_path
+        if path is None or not path.is_file():
+            return
+        import json as _json
+
+        try:
+            stored = _json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return  # a corrupt sidecar is a cache miss, never a failed run
+        outputs = _port_outputs(self._hw_agent.hardware_configuration)
+        limits = _att_limits(self._hw_agent)
+        for port_clock in self._known_port_clocks():
+            key = self._physical_key(outputs, port_clock)
+            if key is not None and isinstance(stored.get(key), int):
+                limits[port_clock] = int(stored[key])
+
+    @staticmethod
+    def _physical_key(outputs: dict, port_clock: str) -> str | None:
+        entry = outputs.get(port_clock.split("-", 1)[0])
+        return None if entry is None else f"slot{entry[1]}/out{entry[2]}"
+
+    def _known_port_clocks(self) -> dict[str, Any]:
+        """``port_clock -> the view that owns it`` for every output chain whose
+        power this driver solves (readout tones and saturation drives)."""
+        found: dict[str, Any] = {}
+        for name in self._device.components():
+            try:
+                view = self._device.component(name)
+            except KeyError:
+                continue
+            for getter in ("_port_clock", "_drive_port_clock"):
+                resolve = getattr(view, getter, None)
+                if resolve is None:
+                    continue
+                try:
+                    found[resolve()] = view
+                except Exception:  # noqa: BLE001 - an element without that port
+                    continue
+        return found
+
+    def _suspect_chains(self) -> dict[str, Any]:
+        """``port_clock -> view`` for every chain whose stored attenuation might
+        be more than its output can actually do.
+
+        A chain is suspect only when its ceiling is UNKNOWN and the solve went
+        above ``_UNIVERSALLY_SAFE_ATT``. That keeps the hardware query rare and
+        purposeful: a modest attenuation is legal on every Qblox RF output ever
+        shipped, so asking about it would cost a cluster connection to learn
+        nothing — and it is what keeps ``acquire()`` from dialling the cluster in
+        offline tests that stub ``run()``.
+        """
+        limits = _att_limits(self._hw_agent)
+        return {
+            port_clock: view
+            for port_clock, view in self._known_port_clocks().items()
+            if self._output_att_of(port_clock)
+            > limits.get(port_clock, _UNIVERSALLY_SAFE_ATT)
+        }
+
+    def _sync_att_limits(self) -> None:
+        """Learn each suspect output's real attenuator ceiling, then re-solve any
+        chain that was solved against a wider one.
+
+        WHY THIS IS NOT IN THE SOLVE. ``out<k>_att``'s ceiling comes from a live
+        SCPI query — qblox_instruments builds the validator from it — so it is
+        unknowable until something connects, and nothing connects until a run.
+        Solving optimistically and correcting here is what keeps the full 60 dB
+        on the modules that have it while never pushing an illegal value to one
+        that does not (chipA: 60 dB on slot 8, 30 dB on slot 4, both RF).
+
+        The correction is POWER-PRESERVING and needs no target: writing a
+        chain's current ``*_power_dbm`` back re-solves it under the new ceiling,
+        and the attenuator's give is taken up by the amplitude. Runs before
+        ``probe()``, because the probe plays ``drive_amp``.
+        """
+        import json as _json
+
+        suspect = self._suspect_chains()
+        if not suspect:
+            return  # nothing on air could be refused; do not touch the cluster
+
+        try:
+            clusters = self._hw_agent.get_clusters()
+        except Exception as err:  # noqa: BLE001 - offline/dummy: keep the default
+            warnings.warn(
+                f"could not read the output-attenuation limits of "
+                f"{', '.join(sorted(suspect))} ({type(err).__name__}: {err}) — "
+                f"leaving the solve at {_DEFAULT_MAX_OUTPUT_ATT} dB; a narrower "
+                f"output will refuse the value at instrument prepare"
+            )
+            return
+
+        outputs = _port_outputs(self._hw_agent.hardware_configuration)
+        limits = _att_limits(self._hw_agent)
+        discovered: dict[str, int] = {}
+        for port_clock, view in suspect.items():
+            entry = outputs.get(port_clock.split("-", 1)[0])
+            if entry is None:
+                continue
+            cluster_name, slot, output = entry
+            module = getattr(clusters.get(cluster_name), f"module{slot}", None)
+            ceiling = None if module is None else _module_max_att(module, output)
+            if ceiling is None:
+                continue
+            limits[port_clock] = ceiling
+            discovered[f"slot{slot}/out{output}"] = ceiling
+            solved = self._output_att_of(port_clock)
+            if solved <= ceiling:
+                continue
+            field = ("readout_power_dbm" if port_clock.endswith(".ro")
+                     else "drive_power_dbm")
+            standing = self._device.component(view.name)  # raw view: no ChangeRecord
+            power = getattr(standing, field)
+            warnings.warn(
+                f"{view.name}: {port_clock} was solved for {solved} dB but slot "
+                f"{slot} output {output} attenuates at most {ceiling} dB — "
+                f"re-solving at {power:.2f} dBm, which the amplitude now carries "
+                f"(same power at the port, less DAC range)"
+            )
+            setattr(standing, field, power)
+
+        path = self._att_limits_path
+        if discovered and path is not None:
+            try:
+                merged = {}
+                if path.is_file():
+                    try:
+                        merged = _json.loads(path.read_text(encoding="utf-8"))
+                    except ValueError:
+                        merged = {}
+                merged.update(discovered)
+                path.write_text(_json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+            except OSError:
+                pass  # a read-only config folder costs a re-query, not a run
+
+    def _output_att_of(self, port_clock: str) -> int:
+        opts = self._hw_agent.hardware_configuration.hardware_options
+        return int((getattr(opts, "output_att", None) or {}).get(port_clock, 0))
+
     def acquire(self, experiment: "Experiment") -> xr.Dataset:
         # The reset-method backstop. add_reset() already refuses inside every
         # probe, but that only fires if the probe remembers to call it; this
@@ -918,6 +1189,8 @@ class QbloxBackend(Backend):
         from lchqb.experiments._reset import check_reset_method
 
         check_reset_method(experiment)
+        # Before probe(): the probe plays the amplitude this may re-solve.
+        self._sync_att_limits()
         with self._thermalization_override(experiment):
             schedule = experiment.probe()  # native qblox_scheduler.Schedule
             try:
