@@ -44,6 +44,11 @@ DENIED = {
     "readout_power": "sweeps the readout amplitude",
     "single_shot_readout": "is the discriminator's own calibration",
     "qubit_spectroscopy": "its Reset is the driven dwell, not a state reset",
+    # unlike its sibling this one's Reset IS a real state reset (the drive comes
+    # up with the readout tone, after it), so active reset is physically valid
+    # here — it stays denied only because nothing has validated it on hardware.
+    # Opting in later is one ClassVar, plus moving this line to CARRIERS.
+    "qubit_spectroscopy_overlap": "not yet validated on hardware",
 }
 
 #: small but legal for every probe's own Parameters minimums
