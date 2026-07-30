@@ -44,11 +44,14 @@ QBLOX_PROBES = sorted(
 #: (the values still clear each Parameters' own minimums: >4 sweep points, >=100
 #: shots; the per-shot loops are hardware loops, so the schedule stays tiny).
 #: ``max_amp_factor`` is the one value chosen for the COMPILER rather than for
-#: size: the fixture's pi_amp x the stock 2.0 exceeds the DAC's [-1, 1] range,
-#: which is an amplitude concern and not what this file is about.
-SMALL = {"num_points": 5, "num_freq_points": 5, "num_flux_points": 5,
-         "num_power_points": 5, "num_averages": 2, "num_shots": 100,
-         "max_amp_factor": 0.5}
+#: size: the fixture's pi_amp x the stock top factor exceeds the DAC's [-1, 1]
+#: range, which is an amplitude concern and not what this file is about.
+#: Both point-count spellings appear because ``_params`` filters per experiment:
+#: ``num_amp_points`` is the amplitude capability's, ``num_points`` the
+#: single-axis frequency/time sweeps'.
+SMALL = {"num_points": 5, "num_amp_points": 5, "num_freq_points": 5,
+         "num_flux_points": 5, "num_power_points": 5, "num_averages": 2,
+         "num_shots": 100, "max_amp_factor": 0.5}
 
 
 def _params(cls):

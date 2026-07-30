@@ -24,6 +24,7 @@ from typing import Any
 from scqo import register
 from scqo.experiments import ReadoutPower
 
+from ._amp import check_amp_window
 from ._reset import add_reset
 
 
@@ -46,9 +47,12 @@ class QbloxReadoutPower(ReadoutPower):
         schedule = Schedule("readout_power_multiplexed")
         for qubit_name in self.params.targets:
             view = self.device.channel(qubit_name, "readout")
-            # the prefactor scales the CURRENT readout amplitude (punchout pattern)
-            amp_lo = float(prefactors[0] * view.readout_amp)
-            amp_hi = float(prefactors[-1] * view.readout_amp)
+            # the prefactor scales the CURRENT readout amplitude (punchout pattern),
+            # validated against the DAC here so an over-range window is refused by
+            # name instead of dying inside the compiler on `awg_gain`
+            amp_abs = check_amp_window(prefactors, view.readout_amp,
+                                       target=qubit_name, field="readout_amp")
+            amp_lo, amp_hi = float(amp_abs[0]), float(amp_abs[-1])
             sub = Schedule(f"readout_power_{qubit_name}")
             with sub.loop(
                 linspace(amp_lo, amp_hi, prefactors.size, dtype=DType.AMPLITUDE)

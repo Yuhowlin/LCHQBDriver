@@ -135,10 +135,16 @@ def make_experiment(cls, backend, roster, params):
 def compile_probe(backend, exp):
     """Compile a probe's Schedule exactly as ``HardwareAgent.run`` would.
 
-    Building a Schedule proves almost nothing: the 1 ns time grid, the latched
-    parameter alignment and the DAC range are all enforced inside the COMPILER,
-    so a probe that only ever gets built fails for the first time on the
-    instrument. Every probe test goes through here.
+    Building a Schedule proves almost nothing: the 1 ns time grid and the latched
+    parameter alignment are enforced inside the COMPILER, so a probe that only
+    ever gets built fails for the first time on the instrument. Every probe test
+    goes through here.
+
+    The compiler does NOT enforce the DAC range for a swept amplitude domain —
+    measured 2026-07-30, do not assume otherwise. A +/-0.9 domain (= +/-2.25 V on
+    a QCM) compiles clean, and +/-3.0 dies with an internal numpy
+    ``ufunc 'absolute' ... StrDType`` that names no port and no voltage. The real
+    range guard is ``lchqb/experiments/_flux_limits.py``, which runs BEFORE this.
     """
     from qblox_scheduler.backends.graph_compilation import SerialCompiler
 

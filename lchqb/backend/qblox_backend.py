@@ -624,27 +624,41 @@ class QbloxDriveChannel(_QbloxChannelView, make_view_base("drive")):
 class QbloxFluxChannel(_QbloxChannelView, make_view_base("flux")):
     """The scqo FLUX channel view (``q1_z``) over the target's ``DeviceElement``.
 
-    The flux LINE is realized — the probes play ``VoltageOffset`` on
-    ``element.ports.flux`` — but the STANDING bias knob is not: nothing in the
-    Qblox element or hardware config holds a DC set-point (see
-    fieldmap.UNREALIZED). The transfer-function FACTS (flux_offset,
-    flux_per_phi0) are physical.json content and never push, so this view carries
-    exactly one raising knob pair.
-    """
+    ``idle_flux`` is the standing bias every relative-frame flux sweep is measured
+    FROM: the probes emit ``VoltageOffset(idle_flux)`` and play their excursion on
+    top of it, exactly as QM's ``initialize_qpu`` + ``play("const")`` does.
 
-    _IDLE_FLUX_UNREALIZED = (
-        "idle_flux is Unrealized on the Qblox backend: the flux port is driven "
-        "per-schedule (VoltageOffset) and no standing DC source is wired into the "
-        "hardware config; the setter lands with the first flux chip"
-    )
+    It was ``Unrealized`` here until 2026-07-30 while the probes read
+    ``element.flux_params.sweet_spot`` through a vendor helper — i.e. the vendor
+    home existed and the neutral surface was simply routed around it, which is
+    the failure mode ``Unrealized`` is supposed to prevent (unsettable knob,
+    invisible in pull mode, standing bias readable behind the API's back but
+    never governed).
+
+    An uncalibrated sweet spot reads as NaN and REFUSES rather than defaulting to
+    0.0. Zero is precisely the value at which the absolute and relative frames
+    coincide, so silently substituting it hides a wrong-frame sweep instead of
+    surfacing it.
+
+    The transfer-function FACTS (flux_offset, flux_per_phi0) are physical.json
+    content and never push, so they bind nothing here.
+    """
 
     @property
     def idle_flux(self) -> float:
-        raise NotImplementedError(f"{self.name}: {self._IDLE_FLUX_UNREALIZED}")
+        value = _read(self._element.flux_params, "sweet_spot")
+        if not math.isfinite(value):
+            raise ValueError(
+                f"{self.name}: idle_flux (element.flux_params.sweet_spot) is not "
+                f"calibrated. A relative-frame flux sweep is measured FROM this "
+                f"bias, so running one without it would silently emit an "
+                f"ABSOLUTE sweep. Calibrate the sweet spot, or set it to 0.0 to "
+                f"declare the line genuinely parked at the DAC zero.")
+        return value
 
     @idle_flux.setter
     def idle_flux(self, value: float) -> None:
-        raise NotImplementedError(f"{self.name}: {self._IDLE_FLUX_UNREALIZED}")
+        _write(self._element.flux_params, "sweet_spot", value)
 
 
 #: channel kind -> the view class this backend serves for it. A kind absent here

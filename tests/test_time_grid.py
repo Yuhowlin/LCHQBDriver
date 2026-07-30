@@ -48,7 +48,7 @@ CASES = [
     # no time axis, but it gained a Reset in v0.14.0 — prove that still compiles.
     # max_amp_factor kept low: the fixture's pi_amp x 2.0 exceeds the DAC's
     # [-1, 1] range, which is an amplitude concern, not a timing one.
-    ("qubit_power_rabi", {"num_points": 7, "max_amp_factor": 0.5}),
+    ("qubit_power_rabi", {"num_amp_points": 7, "max_amp_factor": 0.5}),
 ]
 
 #: the (min, max, n) of every CASE that sweeps time, for the self-check below

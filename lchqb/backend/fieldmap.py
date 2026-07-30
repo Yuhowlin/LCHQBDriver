@@ -140,10 +140,19 @@ FIELD_BINDINGS: dict[str, dict[str, VendorBinding]] = {
                  "UNCALIBRATED - the probes refuse to discriminate on it",
         ),
     },
-    # The flux CHANNEL is realized (the probes play VoltageOffset on
-    # element.ports.flux); its one KNOB is not - see UNREALIZED below. Declared
-    # empty rather than omitted so the served-kind set is visible in one place.
-    "flux": {},
+    "flux": {
+        "idle_flux": VendorBinding(
+            path="element.flux_params.sweet_spot", unit="V",
+            note="the standing bias a RELATIVE-frame flux sweep is measured FROM: "
+                 "the probes emit VoltageOffset(idle_flux) and play the excursion "
+                 "on top, the same shape as QM's initialize_qpu + play('const'). "
+                 "Was Unrealized until 2026-07-30 while the probes read this exact "
+                 "field through a vendor helper - the home existed, the neutral "
+                 "surface was routed around it. NaN means uncalibrated and REFUSES: "
+                 "0.0 is where the absolute and relative frames coincide, so "
+                 "defaulting to it would hide a wrong-frame sweep. QM counterpart: "
+                 "q.z.<flux_point>_offset"),
+    },
 }
 
 #: Neutral KNOBS this backend cannot realize (declared, never silent): pushes are
@@ -188,13 +197,8 @@ UNREALIZED: dict[str, dict[str, Unrealized]] = {
             "feedback' - it does, via conditional playback. QM's while_(I > "
             "rus_exit_threshold) is what this field exists for"),
     },
-    "flux": {
-        "idle_flux": Unrealized(
-            "flux", "idle_flux",
-            "no standing-bias slot on the Qblox element: the flux port is driven "
-            "per-schedule (VoltageOffset), and no DC source is wired into the "
-            "hardware config yet; the setter lands with the first flux chip"),
-    },
+    # "flux" is absent: its one knob (idle_flux) is REALIZED as of 2026-07-30 -
+    # see FIELD_BINDINGS above.
 }
 
 #: Backend-unique calibration knobs, vendor-owned and untracked by SCQO (edit in

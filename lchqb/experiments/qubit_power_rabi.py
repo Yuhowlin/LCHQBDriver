@@ -11,6 +11,7 @@ from typing import Any, ClassVar
 from scqo import register
 from scqo.experiments import QubitPowerRabi
 
+from lchqb.experiments._amp import check_amp_window
 from lchqb.experiments._reset import add_reset
 from lchqb.experiments._state import measure_kwargs
 
@@ -28,14 +29,19 @@ class QbloxQubitPowerRabi(QubitPowerRabi):
         from qblox_scheduler.operations import IdlePulse, Measure, X
         from qblox_scheduler.operations.loop_domains import DType, arange, linspace
 
-        amp_factor = self.sweep_axes["amp_factor"]
+        amp_factor = self.sweep_axes["amp_prefactor"]
         reps = self.params.num_averages
 
         schedule = Schedule("power_rabi_multiplexed")
         for qubit_name in self.params.targets:
-            # neutral field on the target's drive CHANNEL (q<n>_xy) -> absolute volts
+            # neutral field on the target's drive CHANNEL (q<n>_xy). DIMENSIONLESS:
+            # a fraction of the port's full scale, not volts (scqo/catalog.py
+            # declares its unit as ""), so amp_factor scales a fraction and the
+            # product stays one. Only the FLUX path deals in volts, and it
+            # converts explicitly (see experiments/_flux_limits.py).
             pi_amp = self.device.channel(qubit_name, "drive").pi_amp
-            amp_abs = amp_factor * pi_amp
+            amp_abs = check_amp_window(amp_factor, pi_amp, target=qubit_name,
+                                       field="pi_amp")
             acq = measure_kwargs(self, qubit_name)  # {} or the thresholded protocol
             sub = Schedule(f"power_rabi_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):

@@ -33,8 +33,11 @@ from conftest import compile_probe, make_backend, make_experiment  # noqa: E402
 #: (qubit_sqrb / the flux coherence pair carry it too, but are QM-only)
 CARRIERS = ["qubit_relaxation", "qubit_ramsey", "qubit_echo", "qubit_power_rabi"]
 
-#: small but legal for every carrier's own Parameters minimums
-SMALL = {"num_points": 5, "num_averages": 2, "max_amp_factor": 0.5}
+#: small but legal for every carrier's own Parameters minimums. Two point-count
+#: spellings because the dict is filtered per experiment: `num_amp_points` is the
+#: amplitude capability's, `num_points` the time-sweep carriers'.
+SMALL = {"num_points": 5, "num_amp_points": 5, "num_averages": 2,
+         "max_amp_factor": 0.5}
 
 #: a plausible calibrated discriminator (rotation in RADIANS, the neutral unit).
 #: NEGATIVE on purpose — that is what the solve returns in practice, and the

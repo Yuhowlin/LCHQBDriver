@@ -210,6 +210,38 @@ Everything else (parameters, fitting, writeback, simulation) is inherited from `
   SCQO's CLI: that CLI is vendor-neutral, and an `os._exit` there would skip dataset flushes
   for every backend. Closing the loop at `atexit` was rejected too — `atexit` is LIFO and
   qcodes registers its own instrument-closing hooks.
+- **Flux is in VOLTS on the neutral surface and a FRACTION on the wire.** Every Qblox sequencer
+  operand is a fraction of full scale — `VoltageOffset`'s operand is documented "the unitless
+  amplitude", `offset_awg_path{x}` is `Numbers(-1.0, 1.0)` with `unit=""`, and the scheduler's
+  `max_awg_output_voltage` is DEAD metadata (declared five times, read zero times). Nothing in the
+  stack converts. Until 2026-07-30 the flux probes passed `flux_bias_v` straight through, so a
+  requested 0.3 V left a QCM as **0.75 V** and every fitted `flux_offset` was wrong by the module's
+  full-scale factor. `experiments/_flux_limits.py::to_dac_fraction` is the conversion, kept
+  separate from the checks on purpose — a function that validates *and* silently rescales is two
+  jobs, and the rescale must be visible at the call site.
+- **The flux rail is fixed by the MODULE** (no direct/amplified analogue): baseband **QCM 5 Vpp =
+  ±2.5 V peak into 50 Ω**, QRM ±0.5 V. The spec is PEAK-TO-PEAK and the guard compares a
+  single-ended voltage, so it takes half — reading 5 there is a silent factor of two. RF modules
+  cannot emit DC at all, so flux on one is refused as a WIRING error (the vendor config validator
+  catches it first in practice; the branch remains for unvalidated dicts and unknown module types).
+  **Nothing downstream refuses** — measured, not assumed: a ±0.9 domain (±2.25 V) compiles clean
+  and ±3.0 dies with an internal numpy `ufunc 'absolute' ... StrDType` naming no port. The guard
+  must run BEFORE compilation, which is why `tests/conftest.compile_probe` no longer claims the
+  compiler enforces the DAC range.
+- **Two flux frames, and the `_pulse` suffix is a promise.** `resonator_spectroscopy_flux` is
+  ABSOLUTE (the swept value IS the line voltage; `VoltageOffset` replaces the standing bias);
+  `qubit_spectroscopy_flux_pulse` is RELATIVE (the swept value is an excursion the DAC adds to
+  `idle_flux`). Until 2026-07-30 both emitted absolutely, so the `_pulse` probe — which scqo
+  test-enforces as relative and whose estimator re-references `old_idle_flux + fitted` — was
+  silently absolute. It was invisible only because the old vendor helper defaulted an uncalibrated
+  sweet spot to **0.0**, exactly where the two frames coincide. The relative probe now shifts its
+  loop DOMAIN by the anchor: writing `idle_flux + flux` at the use site instead reaches the
+  compiler as a BinaryExpression and dies in `expand_awg_from_normalised_range`.
+- **`idle_flux` is a REALIZED knob** (`element.flux_params.sweet_spot`), not Unrealized. It reads
+  through `flux_anchor_v`, the same call `estimate()` uses to record `old_idle_flux`, so the bias a
+  probe emits from and the one the fit re-references cannot drift apart. NaN means uncalibrated and
+  REFUSES; only the absolute probe's end-of-schedule park falls back to 0 V, because that park is a
+  courtesy and not part of any measurement.
 - Placement rule (which store owns which value): `scqo state --rule` / SCQO TUTORIAL §10.
   A vendor copy of a neutral/physical value is legal only as a CACHE with a named
   refresh trigger — the SCQO stores are truth.
@@ -238,7 +270,7 @@ in the lab venv too:
 `D:\github\.venv-qblox\Scripts\python.exe -m pytest tests/ -q`.
 
 ### Testing discipline — here, just run the whole thing
-`uv run pytest tests/ -q` — **196 tests, ~53 s** (plain `uv run` is correct: `scqo` is a hard
+`uv run pytest tests/ -q` — **208 tests, ~58 s** (plain `uv run` is correct: `scqo` is a hard
 dependency in `pyproject.toml`, so uv's sync keeps it). At this size a selection map would cost
 more attention than it saves; unlike SCQO (476 tests, ~7 min) and scqat (296 / ~53 s), the full
 suite IS the targeted run. Run it before every commit.
@@ -259,6 +291,7 @@ back up before you commit. Below ~10 s there is nothing left to win here; don't 
 | `test_att_limits.py` | the per-module attenuator ceiling: clamp-not-refuse, when the cluster is asked and when it must NOT be, the power-preserving re-solve, the sidecar |
 | `test_overlap_timing.py` | `qubit_spectroscopy_overlap`: the two tones co-start and the ADC opens `acq_start_ns` later — asserted on the COMPILED tree with accumulated absolute times |
 | `test_qblox_reset.py` | `thermalization_time_s` as a neutral drive-channel knob |
+| `test_flux_limits.py` | the flux rail per MODULE, the volts→DAC-fraction conversion, the two frames, the RF-wiring refusal |
 | `test_readout_duration.py` | duration/window knobs on the readout view (pure stubs, no qblox_scheduler) |
 | `test_hw_config_serialization.py` | explicit nulls never written or trusted |
 | `test_mixer_calibration.py` | `scripts/calibrate_mixers.py`: the pure plan (config -> LO/NCO groups) + the AMC control flow on a `dummy_cfg` cluster (channel map, tone, sequencer snapshot/restart, cache) |

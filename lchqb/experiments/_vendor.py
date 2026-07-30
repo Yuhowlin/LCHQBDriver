@@ -31,18 +31,14 @@ def vendor_element(experiment: Any, target: str, kind: str) -> Any:
     return experiment.backend.device.component(name)._element
 
 
-def idle_flux(element: Any) -> float:
-    """The flux to measure at: the calibrated sweet spot when known, else 0 V.
-
-    Vendor-only by necessity — the neutral standing-bias knob (``idle_flux`` on
-    the flux channel) is Unrealized on this backend (backend/fieldmap.py), so
-    the element's own ``flux_params.sweet_spot`` is the only source. Tolerates
-    both scheduler API generations (legacy QCoDeS callables and pydantic-model
-    plain attributes) and elements without ``flux_params``.
-    """
-    try:
-        sweet = element.flux_params.sweet_spot
-        sweet = float(sweet() if callable(sweet) else sweet)
-    except (AttributeError, TypeError):
-        return 0.0
-    return sweet if math.isfinite(sweet) else 0.0
+# `idle_flux` used to live here, reading element.flux_params.sweet_spot directly
+# and falling back to 0.0. It is now the REALIZED neutral knob on the flux channel
+# view (backend/fieldmap.py + QbloxFluxChannel), so a probe reads it the same way
+# it reads every other governed value:
+#
+#     self.device.channel(target, "flux").idle_flux
+#
+# Do not reintroduce a vendor shortcut. The 0.0 fallback is what made the wrong
+# frame invisible: at zero idle the absolute and relative sweeps coincide exactly,
+# so an uncalibrated line silently produced a correct-looking absolute sweep from
+# a probe whose contract says relative. The knob now refuses on NaN instead.

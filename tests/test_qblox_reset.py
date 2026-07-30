@@ -60,9 +60,15 @@ def test_every_qubit_probe_resets_before_pulsing(tmp_path, roster):
     from scqo.experiments import get
 
     backend = make_backend(tmp_path, roster)
+    # max_amp_factor is capped for the DAC, not for size: the fixture's pi_amp
+    # (0.83) x the stock top factor overruns the sequencer's [-1, 1], which
+    # _amp.check_amp_window now refuses at BUILD time. Same cap as
+    # test_probe_surface.py and test_time_grid.py, for the same reason.
+    caps = {"qubit_power_rabi": {"max_amp_factor": 0.5}}
     for name in ("qubit_power_rabi", "qubit_ramsey", "qubit_relaxation", "qubit_echo"):
         cls = get(name)
-        exp = make_experiment(cls, backend, roster, cls.Parameters(targets=["q1"]))
+        exp = make_experiment(cls, backend, roster,
+                              cls.Parameters(targets=["q1"], **caps.get(name, {})))
         exp.sweep_axes = exp.define_sweep()
         names = [type(op).__name__ for op in _ops(exp.probe())]
         assert "Reset" in names, f"{name}: no Reset in the schedule"

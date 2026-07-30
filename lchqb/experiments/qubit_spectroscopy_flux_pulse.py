@@ -25,8 +25,11 @@ from typing import Any
 from scqo import register
 from scqo.experiments import QubitSpectroscopyFluxPulse
 
+from scqo.experiments._capabilities import flux_anchor_v
+
+from ._flux_limits import check_flux_pulse_relative, to_dac_fraction
 from ._reset import add_reset
-from ._vendor import idle_flux as _idle_flux, vendor_element
+from ._vendor import vendor_element
 
 
 @register
@@ -63,13 +66,43 @@ class QbloxQubitSpectroscopyFluxPulse(QubitSpectroscopyFluxPulse):
             center = view.drive_freq_hz  # detuning is relative to the CURRENT drive_freq_hz
             drive_amp = float(view.drive_amp)  # run() parked the solved spec_amp residual
             drive_clock = f"{qubit_name}.01"
-            idle_flux = _idle_flux(element)
+            # The RELATIVE frame's origin. Read through the capability's own
+            # anchor, the same call `estimate()` uses to record `old_idle_flux`,
+            # so the bias this probe EMITS from and the one the fit
+            # re-references against cannot drift apart. Uncalibrated refuses
+            # here rather than defaulting to 0 -- at zero idle the relative and
+            # absolute frames coincide, which is exactly what hid this probe
+            # emitting an absolute sweep under a `_pulse` name until 2026-07-30.
+            idle_flux = flux_anchor_v(self, qubit_name)
+            # The DAC emits the SUM, so the check is idle + excursion — a window
+            # that is fine alone can still clip once it rides on the standing bias.
+            rail = check_flux_pulse_relative(
+                self, name=f"{qubit_name} flux", port=flux_port,
+                idle_v=idle_flux, amps_v=flux_v)
             sub = Schedule(f"qubit_spec_flux_{qubit_name}")
             with sub.loop(arange(0, reps, 1, DType.NUMBER)):
                 # flux OUTER, detuning INNER: flat bin order then matches the
                 # canonical sweep-axes order (flux_bias_v, detuning_hz)
+                # RELATIVE frame: the emitted level is idle + excursion, so the
+                # DOMAIN carries the offset and the loop variable is already the
+                # absolute line voltage — then converted to the DAC fraction the
+                # sequencer actually consumes. Shifting the domain rather than
+                # writing `idle_flux + flux` at the use site is not a style
+                # choice: an arithmetic expression on a loop variable reaches the
+                # compiler as a BinaryExpression and dies in
+                # `expand_awg_from_normalised_range` with `ufunc 'absolute' did
+                # not contain a loop ... StrDType`.
+                #
+                # The reported axis stays the RELATIVE window in VOLTS:
+                # `_to_canonical` rebuilds coordinates from
+                # `experiment.sweep_axes`, and the coord below only has to be
+                # distinct per point for the cluster's binning. `old_idle_flux`
+                # records the origin; the fit re-references
+                # `absolute = old_idle_flux + fitted`.
                 with sub.loop(
-                    linspace(float(flux_v[0]), float(flux_v[-1]), flux_v.size, dtype=DType.AMPLITUDE)
+                    linspace(to_dac_fraction(idle_flux + float(flux_v[0]), rail),
+                             to_dac_fraction(idle_flux + float(flux_v[-1]), rail),
+                             flux_v.size, dtype=DType.AMPLITUDE)
                 ) as flux:
                     with sub.loop(
                         linspace(
@@ -79,7 +112,11 @@ class QbloxQubitSpectroscopyFluxPulse(QubitSpectroscopyFluxPulse):
                             dtype=DType.FREQUENCY,
                         )
                     ) as freq:
-                        # 1. bias the qubit's own flux line for this point
+                        # 1. bias the qubit's own flux line for this point. `flux`
+                        #    is already idle + excursion (see the domain above);
+                        #    VoltageOffset is sticky, so holding it here and
+                        #    returning to `idle_flux` at step 3 emits exactly what
+                        #    QM's initialize_qpu + play("const") does.
                         sub.add(VoltageOffset(flux, 0, port=flux_port))
                         sub.add(IdlePulse(4e-9))
                         # 2. weak CW saturation drive at the shifted frequency, held
@@ -94,8 +131,10 @@ class QbloxQubitSpectroscopyFluxPulse(QubitSpectroscopyFluxPulse):
                         add_reset(sub, self, qubit_name)
                         sub.add(VoltageOffset(0, 0, port=microwave_port, clock=drive_clock))
                         # 3. flux back to idle BEFORE the readout (measure at the
-                        #    calibrated operating point, matching the QM flux probe)
-                        sub.add(VoltageOffset(idle_flux, 0, port=flux_port))
+                        #    calibrated operating point, matching the QM flux probe).
+                        #    Excursion 0 == parked here, which is what makes this
+                        #    the relative frame's origin rather than the DAC zero.
+                        sub.add(VoltageOffset(to_dac_fraction(idle_flux, rail), 0, port=flux_port))
                         sub.add(IdlePulse(4e-9))
                         sub.add(IdlePulse(61e-9))  # QRC-with-QCM settling fudge (cal07)
                         sub.add(
